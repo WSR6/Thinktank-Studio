@@ -351,6 +351,9 @@ main > *, .group, .tab, .agent-list, .agent > *, .request > *, .messages > * { m
 .agent .log { height: clamp(90px, 13vh, 160px); }
 .agent .log-toggle { border: none; border-radius: 0; padding: 6px 12px; text-align: left; color: var(--muted); background: var(--bg); font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .agent .log-toggle:not([hidden])[aria-expanded="true"] + .log { height: clamp(180px, 38vh, 460px); }
+.agent .log-resize { flex: none; position: relative; height: 9px; cursor: ns-resize; touch-action: none; border-top: 1px solid var(--border); background: var(--panel); }
+.agent .log-resize::after { content: ''; position: absolute; left: 50%; top: 3px; width: 32px; height: 3px; margin-left: -16px; border-radius: 2px; background: var(--muted); opacity: .6; }
+.agent .log-resize:hover, .agent .log-resize.dragging { background-color: color-mix(in srgb, var(--c) 35%, var(--panel)); }
 .updates { flex-shrink: 0; color: var(--muted); font-size: 12px; }
 .updates summary { cursor: pointer; }
 .updates .msg { margin: 5px 0 0 12px; }

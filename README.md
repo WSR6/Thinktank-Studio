@@ -2,7 +2,7 @@
 
 **AI coding agents from different companies, working as one team.** Claude Code, Codex, Grok, Hermes and local models plan together, debate the approach, build in parallel, and review each other's work, all in one chat that you run.
 
-<!-- Screenshot: the main window with a project in Build (chat on the left, agent panels on the right). -->
+![Thinktank Studio building a small project: the team chat on the left, each agent's live activity on the right](docs/screenshot.png)
 
 ## What it is
 

@@ -554,7 +554,9 @@ function buildAgent(a) {
       <input class="role-custom" placeholder="Describe this agent's job" title="The custom role, in your own words. Press Enter or click away to save." hidden />
     </div>
     <button class="log-toggle" aria-expanded="false"></button>
-    <div class="log" hidden></div>`;
+    <div class="log" hidden></div>
+    <div class="log-resize" title="Drag to make this agent's activity box taller or shorter (dragging a closed box opens it). Double-click to go back to the normal size."></div>`;
+  makeLogResizable(el, a.id);
 
   el.querySelector('.settings-toggle').onclick = () => {
     el.dataset.settings = el.dataset.settings === 'open' ? '' : 'open';
@@ -801,6 +803,48 @@ function updateAgentLog(id) {
   toggle.hidden = working;
   toggle.setAttribute('aria-expanded', String(open));
   el.querySelector('.log').hidden = !open;
+}
+
+/**
+ * The bar under an agent's activity box: drag it to set the box's height. The height is remembered
+ * per agent in this browser; double-click goes back to the normal size.
+ */
+function makeLogResizable(el, id) {
+  const log = el.querySelector('.log');
+  const bar = el.querySelector('.log-resize');
+  const key = `tts-log-height-${id}`;
+  const apply = (px) => {
+    log.style.height = px ? `${Math.round(Math.min(Math.max(px, 60), window.innerHeight * 0.85))}px` : '';
+  };
+  try { apply(Number(localStorage.getItem(key)) || 0); } catch {}
+  bar.addEventListener('pointerdown', (e) => {
+    if (e.button !== 0) return;
+    e.preventDefault();
+    // A closed box opens first, so the drag has something to size.
+    if (log.hidden) {
+      el.dataset.logOpen = 'true';
+      updateAgentLog(id);
+    }
+    const startY = e.clientY;
+    const startH = log.getBoundingClientRect().height;
+    bar.setPointerCapture(e.pointerId);
+    bar.classList.add('dragging');
+    const move = (ev) => apply(startH + ev.clientY - startY);
+    const end = () => {
+      bar.classList.remove('dragging');
+      bar.removeEventListener('pointermove', move);
+      bar.removeEventListener('pointerup', end);
+      bar.removeEventListener('pointercancel', end);
+      try { localStorage.setItem(key, String(Math.round(log.getBoundingClientRect().height))); } catch {}
+    };
+    bar.addEventListener('pointermove', move);
+    bar.addEventListener('pointerup', end);
+    bar.addEventListener('pointercancel', end);
+  });
+  bar.addEventListener('dblclick', () => {
+    apply(0);
+    try { localStorage.removeItem(key); } catch {}
+  });
 }
 
 function addLogLine(id, line, trim, root = document) {
