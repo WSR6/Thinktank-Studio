@@ -3349,10 +3349,29 @@ export class Orchestrator extends EventEmitter {
   }
 
   private async runTurn(r: Runtime, gen: number, stopGen: number, retry = false): Promise<void> {
+    try {
+      await this.runTurnBody(r, gen, stopGen, retry);
+    } finally {
+      // The panel shows "queued" while a turn waits: a turn that ends, or is skipped or dropped
+      // before it starts, must refresh it.
+      if (gen === this.gen) this.emit('state');
+    }
+  }
+
+  private async runTurnBody(r: Runtime, gen: number, stopGen: number, retry: boolean): Promise<void> {
     // Setup → Agents is changing the team: start after it, and not at all for an agent it replaced.
     while (this.savingTeam) await new Promise((res) => setTimeout(res, 100));
     if (this.agents.get(r.cfg.id) !== r) return;
     r.pending = false;
+    // Queued before a Stop: dropped. Anything queued after the Stop found this slot taken and waited
+    // on it, so this same call runs it (whoever awaits the queue then waits for that turn).
+    if (stopGen !== r.stopGen && !retry) {
+      if (gen !== this.gen || (!r.hasNext && !r.nextAsk)) {
+        r.lastOutcome = 'skipped';
+        return;
+      }
+      stopGen = r.stopGen;
+    }
     r.lastOutcome = 'skipped';
     // A question's turn goes first, on its own; other queued work runs in the turn after it.
     let plan: TurnPlan;
