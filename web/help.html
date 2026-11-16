@@ -1,0 +1,381 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Thinktank Studio Help</title>
+<link rel="icon" href="data:," />
+<script>
+  try {
+    const t = localStorage.getItem('tts-theme');
+    if (t === 'light' || t === 'dark') document.documentElement.dataset.theme = t;
+  } catch {}
+</script>
+<style>
+:root {
+  color-scheme: light;
+  --bg: #f6f6f4; --panel: #ffffff; --border: #dddcd7; --text: #1f1f1d; --muted: #6d6c66;
+  --accent: #2f6fde; --accent-soft: #e9f0fc; --ok: #2e8a4f; --ok-soft: #e4f3e9; --warn: #9a6408; --warn-soft: #fdf3dc;
+  --code: #f0efea; --on-accent: #ffffff;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    color-scheme: dark;
+    --bg: #161615; --panel: #1f1f1e; --border: #353532; --text: #e8e7e2; --muted: #aba99f;
+    --accent: #6b9cf0; --accent-soft: #22304a; --ok: #4fbf74; --ok-soft: #1d3326; --warn: #e0a63a; --warn-soft: #3a3020;
+    --code: #2a2a28; --on-accent: #10141c;
+  }
+}
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --bg: #161615; --panel: #1f1f1e; --border: #353532; --text: #e8e7e2; --muted: #aba99f;
+  --accent: #6b9cf0; --accent-soft: #22304a; --ok: #4fbf74; --ok-soft: #1d3326; --warn: #e0a63a; --warn-soft: #3a3020;
+  --code: #2a2a28; --on-accent: #10141c;
+}
+* { box-sizing: border-box; }
+html { scroll-behavior: smooth; scroll-padding-top: 16px; }
+body {
+  margin: 0; background: var(--bg); color: var(--text);
+  font: 16px/1.65 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+}
+.layout { display: grid; grid-template-columns: 250px minmax(0, 1fr); max-width: 1180px; margin: 0 auto; gap: 40px; padding: 0 24px; }
+nav.toc { position: sticky; top: 0; align-self: start; max-height: 100vh; overflow-y: auto; padding: 28px 0; }
+nav.toc .brand { font-weight: 700; font-size: 18px; margin-bottom: 4px; }
+nav.toc .sub { color: var(--muted); font-size: 13px; margin-bottom: 18px; }
+nav.toc a { display: block; padding: 5px 10px; border-radius: 6px; color: var(--muted); text-decoration: none; font-size: 14px; border-left: 2px solid transparent; }
+nav.toc a:hover { color: var(--text); background: var(--panel); }
+nav.toc a.active { color: var(--accent); border-left-color: var(--accent); background: var(--panel); }
+main { padding: 32px 0 80px; min-width: 0; }
+header.hero { background: var(--panel); border: 1px solid var(--border); border-radius: 14px; padding: 28px 32px; margin-bottom: 36px; }
+header.hero h1 { margin: 0 0 8px; font-size: 30px; line-height: 1.2; }
+header.hero p { margin: 0; color: var(--muted); font-size: 17px; max-width: 62ch; }
+section { margin-bottom: 44px; }
+h2 { font-size: 23px; margin: 0 0 14px; padding-bottom: 8px; border-bottom: 1px solid var(--border); }
+h3 { font-size: 18px; margin: 26px 0 8px; }
+p, li { max-width: 72ch; }
+ul, ol { padding-left: 22px; }
+li { margin: 5px 0; }
+a { color: var(--accent); }
+code, kbd { font: 14px ui-monospace, "Cascadia Code", Consolas, monospace; background: var(--code); border-radius: 5px; padding: 1px 6px; }
+kbd { border: 1px solid var(--border); border-bottom-width: 2px; }
+.ui { font-weight: 600; white-space: nowrap; background: var(--accent-soft); color: var(--text); border-radius: 5px; padding: 1px 7px; font-size: 15px; }
+.steps { counter-reset: step; list-style: none; padding: 0; }
+.steps > li { counter-increment: step; position: relative; padding: 14px 18px 14px 62px; margin: 12px 0; background: var(--panel); border: 1px solid var(--border); border-radius: 12px; max-width: none; }
+.steps > li::before { content: counter(step); position: absolute; left: 16px; top: 13px; width: 32px; height: 32px; border-radius: 50%; background: var(--accent); color: var(--on-accent); font-weight: 700; display: grid; place-items: center; }
+.steps > li strong:first-child { display: block; font-size: 17px; margin-bottom: 2px; }
+.cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)); gap: 14px; margin: 14px 0; }
+.card { background: var(--panel); border: 1px solid var(--border); border-radius: 12px; padding: 16px 18px; }
+.card h4 { margin: 0 0 6px; font-size: 16px; }
+.card p { margin: 0; color: var(--muted); font-size: 15px; }
+.callout { border-radius: 10px; padding: 12px 16px; margin: 16px 0; border: 1px solid var(--border); background: var(--panel); max-width: 72ch; }
+.callout.tip { background: var(--ok-soft); border-color: transparent; }
+.callout.warn { background: var(--warn-soft); border-color: transparent; }
+.callout b:first-child { margin-right: 4px; }
+table { border-collapse: collapse; width: 100%; margin: 14px 0; background: var(--panel); border: 1px solid var(--border); border-radius: 12px; overflow: hidden; font-size: 15px; }
+th, td { text-align: left; vertical-align: top; padding: 10px 14px; border-bottom: 1px solid var(--border); }
+th { background: var(--code); font-size: 14px; }
+tr:last-child td { border-bottom: 0; }
+.vs { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; margin: 14px 0; }
+.vs .card h4 { font-size: 18px; }
+.vs ul { margin: 8px 0 0; padding-left: 18px; color: var(--text); font-size: 15px; }
+.flow { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin: 14px 0; }
+.flow span { background: var(--panel); border: 1px solid var(--border); border-radius: 999px; padding: 6px 14px; font-weight: 600; font-size: 15px; }
+.flow i { color: var(--muted); font-style: normal; }
+dl { margin: 0; }
+dt { font-weight: 700; margin-top: 12px; }
+dd { margin: 2px 0 0; color: var(--muted); max-width: 72ch; }
+footer { color: var(--muted); font-size: 14px; border-top: 1px solid var(--border); padding-top: 16px; }
+@media (max-width: 860px) {
+  .layout { display: block; padding: 0 16px; }
+  nav.toc { position: static; max-height: none; padding: 20px 0 0; display: flex; flex-wrap: wrap; gap: 4px; }
+  nav.toc .brand, nav.toc .sub { width: 100%; }
+  nav.toc a { border: 1px solid var(--border); border-left-width: 1px; border-radius: 999px; padding: 3px 10px; font-size: 13px; }
+  header.hero { padding: 20px; }
+  header.hero h1 { font-size: 24px; }
+  .vs { grid-template-columns: 1fr; }
+  table { display: block; overflow-x: auto; }
+}
+</style>
+</head>
+<body>
+<div class="layout">
+<nav class="toc" aria-label="Contents">
+  <div class="brand">Thinktank Studio Help</div>
+  <div class="sub">How to use the app, start to finish</div>
+  <a href="#what">What this app is</a>
+  <a href="#before">Before you start</a>
+  <a href="#tour">The screen at a glance</a>
+  <a href="#start">Start a new project</a>
+  <a href="#phases">Plan, Build, Review</a>
+  <a href="#debate">Plan vs Debate</a>
+  <a href="#talk">Talking to the agents</a>
+  <a href="#setup">The Setup panel</a>
+  <a href="#own-agent">Add your own agent</a>
+  <a href="#tabs">The side tabs</a>
+  <a href="#reviews">Reviews and finishing</a>
+  <a href="#helper">The App helper</a>
+  <a href="#problems">When something goes wrong</a>
+  <a href="#usage">Saving usage</a>
+  <a href="#glossary">Glossary</a>
+</nav>
+
+<main>
+<header class="hero">
+  <h1>Thinktank Studio</h1>
+  <p>One chat room where several AI coding agents (Claude Code, Codex, Grok, Hermes Agent, local models or any other AI command-line program) plan a project together, split up the work, build it in their own copies of the code, and check each other's work before it goes into the main version.</p>
+</header>
+
+<section id="what">
+  <h2>What this app is</h2>
+  <p>Each agent is the real command-line tool you already use, signed in with your own account. The app doesn't replace them; it coordinates them: one shared chat, a shared plan and task list, a separate working copy of the code for each agent, and reviews before anything is merged.</p>
+  <div class="cards">
+    <div class="card"><h4>You stay in charge</h4><p>You pick the leader, approve big steps, and can stop any agent at any time.</p></div>
+    <div class="card"><h4>Agents work in parallel</h4><p>In Build, each agent works on its own tasks in its own copy, at the same time.</p></div>
+    <div class="card"><h4>Work is checked</h4><p>Finished tasks go through reviews (and optional tests) before they're merged.</p></div>
+  </div>
+</section>
+
+<section id="before">
+  <h2>Before you start</h2>
+  <ul>
+    <li><b>Install and sign in</b> to each agent's CLI you want on the team (for example <code>claude</code>, <code>codex</code>, <code>grok</code>, or <code>hermes</code> for Hermes Agent). Run each once in a terminal to log in (Hermes: <code>hermes model</code>). No API keys are needed if you use a subscription login.</li>
+    <li><b>Node 20+ and git</b> must be installed.</li>
+    <li><b>Install once:</b> run <code>npm install</code> in the app folder.</li>
+    <li><b>Start the app</b> with <code>npm start</code> in the app folder, then open <code>http://localhost:4317</code>. To try it without any agents, use <code>npm run mock</code>: fake agents that do pretend work.</li>
+    <li><b>Which agents</b> are on the team: <b>Setup → Agents…</b> (any number; see <a href="#own-agent">Add your own agent</a>). You can change each agent's model and effort later in the Agents tab.</li>
+  </ul>
+  <div class="callout tip"><b>Tip:</b> Hover over any button, menu or label in the app for a one-line explanation.</div>
+</section>
+
+<section id="tour">
+  <h2>The screen at a glance</h2>
+  <table>
+    <tr><th style="width:28%">Where</th><th>What it's for</th></tr>
+    <tr><td><b>Top bar</b></td><td>Open a project, see the live status ("Building · 2 working · 1 needs you"), switch phase (<span class="ui">Plan</span> <span class="ui">Build</span> <span class="ui">Review</span>), <span class="ui">Stop all</span>, usage totals, <span class="ui">Setup</span>, the theme, and <span class="ui">?</span> for this page.</td></tr>
+    <tr><td><b>Chat (left)</b></td><td>The team room. Everything the agents say and do shows here, plus banners for anything that needs you.</td></tr>
+    <tr><td><b>Side tabs (right)</b></td><td><span class="ui">Agents</span> live activity and settings, <span class="ui">Plan</span> the plan document, <span class="ui">Tasks</span> the task list and reviews, <span class="ui">Branches</span> each agent's code and merging, <span class="ui">Helper</span> a private chat about the app itself.</td></tr>
+    <tr><td><b>Green banner</b></td><td>"✓ FINISHED": every task is done, reviewed and merged into main.</td></tr>
+  </table>
+  <p>On a phone, a <span class="ui">Chat</span> / <span class="ui">Workspace</span> switch flips between the chat and the side tabs.</p>
+</section>
+
+<section id="start">
+  <h2>Start a new project</h2>
+  <p>The usual order, from an empty folder to finished, merged code:</p>
+  <ol class="steps">
+    <li><strong>Create the project</strong>Open <span class="ui">Setup</span>, type a name (letters, numbers, <code>-</code>, <code>_</code>) and click <span class="ui">Create</span>. The app makes a main code folder plus a working copy for each agent.</li>
+    <li><strong>Choose the team setup</strong>In <span class="ui">Setup</span>, pick the <b>Leader</b>. It starts as <b>You</b>: pick an agent if you want it to write the plan and task list, ask to start Build, and combine debates. If you stay leader, you write the plan and tasks yourself and click Build. <b>Gates</b> start on, so the leader asks you before changing phase or merging unreviewed work. <b>Checks</b> start <b>Off</b>: set it to <b>Role chain</b> or <b>Any other agent</b> if you want finished tasks reviewed and merged automatically (recommended). Turn on <b>Autopilot</b> so agents keep working through their tasks. In the <span class="ui">Agents</span> tab you can give agents roles (builder, first and final reviewer) or pick a <b>saved setup</b>.</li>
+    <li><strong>Describe what you want</strong>In <b>Plan</b>, send one message to everyone: what to build, who it's for, must-haves, and anything to avoid. Attach files or screenshots with <span class="ui">📎 Files</span>, or paste or drop them in. For a big or uncertain decision, use <a href="#debate">Debate</a> instead.</li>
+    <li><strong>Let them plan</strong>The agents discuss in turns. The leader (or you, if you lead) writes the plan (<span class="ui">Plan</span> tab) and the task list (<span class="ui">Tasks</span> tab): who does what, which files each task owns, and what has to wait for what. Answer any questions they ask you.</li>
+    <li><strong>Check the plan and start Build</strong>When the leader asks to move to Build (or you click <span class="ui">Build</span>), the app shows a plan check: every task, its owner and files, plus warnings such as overlapping files or an agent with nothing to do. Click <b>Start Build</b>. When it was the leader who asked, you can also <b>Send back</b> the plan with a note; when you clicked Build yourself, <b>Cancel</b> takes you back.</li>
+    <li><strong>Let them build</strong>With <b>Autopilot</b> on, each agent works through its tasks by itself. Watch the <span class="ui">Agents</span> tab, and answer anything that shows up as a banner above the chat.</li>
+    <li><strong>Reviews and merging</strong>With <b>Checks</b> on, each finished task is reviewed (and tested, if you set a test command), and accepted work is merged into main automatically. A task that needs changes goes back to its builder with the notes. With Checks <b>Off</b> there is no agent review: if you set a <b>Tests</b> command, a task whose tests pass is still accepted and merged automatically; with no tests either, finished work stays on the agent's branch until the leader asks to merge or you click <b>Merge</b> in the <span class="ui">Branches</span> tab.</li>
+    <li><strong>Finished</strong>When every task is done and merged, the green <b>FINISHED</b> banner appears. Your code is in the project's <code>repo</code> folder.</li>
+  </ol>
+  <div class="callout"><b>Coming back later?</b> The last project reopens when you start the app. If agents were cut off mid-work, a banner offers <b>Continue</b>.</div>
+</section>
+
+<section id="phases">
+  <h2>Plan, Build, Review</h2>
+  <div class="flow"><span>Plan</span><i>→</i><span>Build</span><i>→</i><span>(Review)</span><i>→</i><span>Finished</span></div>
+  <table>
+    <tr><th style="width:16%">Phase</th><th>What happens</th><th style="width:30%">Use it when</th></tr>
+    <tr><td><b>Plan</b></td><td>Agents reply one at a time, each seeing the others. They agree on an approach and the leader writes the plan and task list. No code yet.</td><td>Starting a project, or changing direction.</td></tr>
+    <tr><td><b>Build</b></td><td>Every agent works on its own tasks at the same time, each in its own copy of the code. With Checks on, finished tasks are reviewed and merged as they're accepted.</td><td>The task list is ready.</td></tr>
+    <tr><td><b>Review</b></td><td>Agents check each other's whole branches and report problems.</td><td>Optional. With Checks on, each task is already reviewed in Build, so most projects finish without it.</td></tr>
+  </table>
+</section>
+
+<section id="debate">
+  <h2>Plan vs Debate</h2>
+  <div class="vs">
+    <div class="card">
+      <h4>💬 A normal message in Plan</h4>
+      <p>A conversation. Agents answer in turn and build on each other.</p>
+      <ul>
+        <li>Each agent sees what the others said.</li>
+        <li>Up to 3 rounds, until nobody has anything new.</li>
+        <li>Best for working out details and the task list.</li>
+      </ul>
+    </div>
+    <div class="card">
+      <h4>⚖️ Debate</h4>
+      <p>Independent answers, then critique, then one combined plan.</p>
+      <ul>
+        <li>Every agent answers on its own, without seeing the others.</li>
+        <li>Then they critique each other's answers.</li>
+        <li>Then the leader writes the best combined plan into the Plan tab. If you're the leader, you pick the plan yourself from the answers.</li>
+        <li>Best for big choices: architecture, tech stack, "how should we approach this?"</li>
+      </ul>
+    </div>
+  </div>
+  <p>To start one, type the question in the message box and click <span class="ui">Debate</span>. A debate uses more usage than a normal message, because every agent answers and critiques.</p>
+</section>
+
+<section id="talk">
+  <h2>Talking to the agents</h2>
+  <ul>
+    <li><b>Everyone:</b> a message with no name goes to the whole team (when an agent leads, it answers first).</li>
+    <li><b>One agent, in the room:</b> start with <code>@claude</code>, <code>@codex</code> or <code>@grok</code>. Only that agent answers, but the message and reply stay in the shared chat.</li>
+    <li><b>One agent, privately:</b> pick <b>DM &lt;name&gt;</b> in the menu next to the message box (it normally says <b>Everyone</b>). The other agents don't see it, and the reply comes back privately.</li>
+    <li><b>Keys:</b> <kbd>Enter</kbd> sends, <kbd>Shift</kbd>+<kbd>Enter</kbd> adds a new line.</li>
+    <li><b>Files:</b> <span class="ui">📎 Files</span>, paste, or drag and drop. Images (PNG, JPG, GIF, WebP) and text files such as code, logs and notes.</li>
+    <li><b>When an agent needs you:</b> a banner appears above the chat with the question, often with one-click answer buttons. It also shows in the browser tab title.</li>
+    <li><b>Agents talk to each other</b> by mentioning a teammate. After 6 hand-offs in a row the app pauses them so they can't loop forever; any message from you (or the App helper) lets them carry on.</li>
+  </ul>
+</section>
+
+<section id="setup">
+  <h2>The Setup panel</h2>
+  <dl>
+    <dt>Leader</dt><dd>Who runs the team: speaks first, writes the plan and task list, asks to change phase or merge, and writes the combined plan after a debate. Starts as <b>You</b>; pick an agent to hand these jobs over.</dd>
+    <dt>Gates</dt><dd>On by default. On: the leader must ask you before changing phase or merging unreviewed work; you approve or reject in a yellow bar. Off: those happen right away.</dd>
+    <dt>Autopilot</dt><dd>Off by default. In Build, agents keep working through their tasks on their own until done, blocked, or out of turns. Off: each agent takes one turn per message.</dd>
+    <dt>Checks</dt><dd>How finished tasks are checked; <b>Off</b> by default. <b>Role chain</b>: builder → first reviewer → final reviewer. For two reviews, turn on <b>Roles</b> in the Agents tab and give agents the First reviewer and Final reviewer roles; with Roles off it falls back to one review by another agent. <b>Any other agent</b>: one review by a different agent. <b>Off</b>: no agent review. A <b>Tests</b> command still runs, and a task whose tests pass is merged automatically.</dd>
+    <dt>Tests</dt><dd>An optional command, such as <code>npm test</code> or <code>pytest</code>, that must pass before a task is accepted.</dd>
+    <dt>Desktop tests</dt><dd>Optional tests that need the real mouse and screen, such as Playwright tests that drag windows around. Agents run in sandboxes that usually can't do this, so after a task passes its other checks it waits with a <b>Run now</b> / <b>Skip</b> bar above the chat. Run now takes over the mouse until the tests finish, so don't touch it meanwhile. A failure goes back to the builder with the output; Skip accepts the task without them. With <b>Run my project</b> on, the App helper presses Run now for you once this computer has had no mouse or keyboard input for 2 minutes (in practice a few minutes after you step away: the app checks once a minute and the helper takes a moment), after a 20-second countdown you can <b>Cancel</b>.</dd>
+    <dt>Agents…</dt><dd>Add, remove or change the agents on the team: any number, not just three. See <a href="#own-agent">Add your own agent</a>.</dd>
+    <dt>New project</dt><dd>Type a name and click Create.</dd>
+  </dl>
+</section>
+
+<section id="own-agent">
+  <h2>Add your own agent</h2>
+  <p>An agent is any AI command-line program installed on the computer running the app. Open <b>Setup → Agents…</b>, click <b>+ Add agent</b>, fill in the row and click <b>Save</b>. The team changes right away: a new agent gets its own copy of the open project and its own branch, and shows up in the chat, the Leader menu and the Agents tab. Removing an agent keeps its branch and copy on disk, so nothing it built is lost. Saving waits until no agent is working (press <b>Stop all</b> first if you're in a hurry).</p>
+  <dl>
+    <dt>Name</dt><dd>Shown in the chat and used to @mention the agent. Its id (for @mentions and folder names) is made from the name.</dd>
+    <dt>Program</dt><dd>What kind of program it is, which decides how the app talks to it. Claude Code, Codex CLI, Grok CLI and Hermes Agent are fully supported: the app resumes their conversations, shows their tool use live, counts usage and offers a model picker. <b>Other CLI</b> works with any program that takes a prompt and prints a reply.</dd>
+    <dt>Command</dt><dd>The program to run, as you'd type it in a terminal (for example <code>codex</code>). It must be on your PATH.</dd>
+    <dt>Extra options</dt><dd>Added to every run, separated by spaces; quote an option with spaces in it.</dd>
+    <dt>Default model</dt><dd>Optional. You can still pick a model per project in the Agents tab.</dd>
+    <dt>Model server</dt><dd>Codex CLI only, optional. The address of a model server on this computer or another one on your network, so Codex runs that model instead of OpenAI's (see <a href="#local-models">Local models</a>).</dd>
+    <dt>Stuck warning after (min)</dt><dd>How long the agent may go without any output before the app shows a "may be stuck" banner. Empty uses the default: <b>6 minutes</b>, or <b>30 minutes</b> for an agent with a model server, because local models can think for many minutes before they answer. Raise it for a slow machine or a big model; lower it if you want to hear sooner.</dd>
+  </dl>
+  <p>You can run <b>two agents on the same program</b>, for example two Codex agents with different models; each one is a separate team member with its own copy of the code.</p>
+
+  <h3>Examples</h3>
+  <dl>
+    <dt>Hermes Agent</dt><dd>Program <b>Hermes Agent</b>, command <code>hermes</code>. Its model list comes from your Hermes setup; sign in first with <code>hermes model</code>. A Hermes session keeps the model and settings it started with, so changing them starts a new Hermes conversation (it still gets the recent chat). Stopping a Hermes agent disconnects the app, but Hermes finishes the running turn in the background. Hermes sends a large set of instructions and tools every turn (a small task can use 50–100k tokens), so watch your usage on a metered plan.</dd>
+    <dt>A local model (free, runs on your own hardware)</dt><dd>Program <b>Codex CLI</b>, command <code>codex</code>, the server's address in <b>Model server</b> and the model's name in <b>Default model</b>. See <a href="#local-models">Local models</a> below.</dd>
+    <dt>Any other CLI (aider, opencode…)</dt><dd>Program <b>Other CLI</b>. By default the prompt goes to the program's standard input. If it reads the prompt from a file instead, write <code>{promptFile}</code> where the file name goes in Extra options, for example <code>--yes-always --message-file {promptFile}</code> for aider; the app writes the prompt to a temporary file each turn. (<code>{prompt}</code> puts the text itself on the command line, which breaks with long or multi-line prompts, especially on Windows; prefer the other two.) Check your program's <code>--help</code> for its one-shot (non-interactive) mode. Other CLIs can't resume a conversation, so the app sends recent chat every turn, and the model and effort pickers don't apply (put those options in Extra options).</dd>
+  </dl>
+  <h3 id="local-models">Local models</h3>
+  <p>An agent can use a model running on your own hardware: this computer, or another computer on your network (a Mac mini or a PC with a strong graphics card). The agent itself, its copy of the project and its commits stay on the computer running the app; only the model's thinking happens on the server. The app drives it through Codex CLI, so it works like the normal Codex agent: it resumes its conversation, shows its tool use live and counts tokens.</p>
+  <ol>
+    <li><b>Run a model server</b> that offers the OpenAI <b>Responses API</b> (<code>/v1/responses</code>). Codex no longer accepts the older chat API. <b>LM Studio</b> works (tested); recent <b>Ollama</b> versions do too; a <b>llama.cpp</b> server works if your version has <code>/v1/responses</code>. They all run models the same way underneath, so pick the one you like.</li>
+    <li><b>Load a model that can use tools.</b> In LM Studio that's the hammer icon. A model that can't call tools can talk but can't edit files or run commands. Size alone doesn't decide it: in testing, Qwen 3.5 9B finished tasks while Gemma 4 12B claimed work it hadn't done. Pick one that fits in about 75% of the server's memory, and let it run <b>1 request at a time</b> (LM Studio: Parallel / max concurrent predictions = 1); each extra slot reserves memory for another full context.</li>
+    <li><b>Give it a long context: at least 32k, 64k if memory allows.</b> Each request starts at about 6k tokens (the app's short instructions plus the task) and grows as the agent works, and LM Studio's default (often 4k or 8k) cuts it off with "exceeds the available context size".</li>
+    <li><b>If the server is another computer</b>, let it accept connections from the network (LM Studio: Developer tab → Server Settings → <b>Serve on Local Network</b>; Ollama: set <code>OLLAMA_HOST=0.0.0.0</code>), allow it through that computer's firewall, and keep it from sleeping. Its address is then its network IP, e.g. <code>http://192.168.1.50:1234/v1</code>. <code>127.0.0.1</code> or <code>localhost</code> only works when the server is on the same computer as the app.</li>
+    <li>In <b>Setup → Agents…</b>: Program <b>Codex CLI</b>, command <code>codex</code>, <b>Model server</b> = the address (LM Studio: <code>http://&lt;ip&gt;:1234/v1</code>, Ollama: <code>http://&lt;ip&gt;:11434/v1</code>), <b>Default model</b> = the model's name exactly as the server lists it (e.g. <code>google/gemma-4-12b-qat</code>). Once saved, the Agents tab's model picker lists the server's models.</li>
+  </ol>
+  <div class="callout"><b>Local models are slow, and that's normal.</b> One small step can take minutes on a laptop or a Mac mini, and a whole task much longer than on a cloud model. That's why an agent with a model server waits <b>30 minutes</b> without output before the app says it may be stuck (6 for cloud agents). Change it per agent in <b>Stuck warning after (min)</b>. Reasoning (thinking) on or off is set in the server's app, not in the app's effort picker. Tokens still count, but they cost nothing.</div>
+  <p><b>Smaller prompts for local models.</b> An agent with a model server runs Codex with its own settings folder, <code>~/.thinktank/codex-server</code>, so plugins and tool servers you enabled for your normal Codex (GitHub, browser, documents…) aren't sent to the local model, and with short instructions written for local models instead of Codex's long built-in ones. Each request is about 6k tokens instead of about 9k. It needs no OpenAI login. The app also tells Codex how big the model's context is (LM Studio reports it; otherwise 32k is assumed), so Codex shortens the conversation before the server runs out of room. To use your own instructions, add <code>-c model_instructions_file="C:/path/to/file.md"</code> in Extra options.</p>
+
+  <div class="callout tip"><b>Where it's saved:</b> the team lives in <code>agents.config.json</code> in the app folder; the previous version is kept as <code>agents.config.json.bak</code>. You can also edit that file by hand and restart the app. Settings there that Setup doesn't show (like <code>allowCommands</code>) are kept when you save.</div>
+</section>
+
+<section id="tabs">
+  <h2>The side tabs</h2>
+  <h3>Agents</h3>
+  <ul>
+    <li>Live activity for each agent: what it's reading, running and writing.</li>
+    <li><b>Stop</b> ends its current turn. The <b>On</b> switch takes an agent off the team until you switch it back.</li>
+    <li><b>Settings</b>: model, effort and autonomy (how much it may do without asking), applied from its next turn.</li>
+    <li><b>Roles</b> and <b>saved setups</b>: give each agent a job (builder, first reviewer, final reviewer…) or switch the whole team setup in one click, for example when one agent is out of usage.</li>
+    <li>Usage: tokens used, and for CLIs that report it (Claude and Codex), how much of the plan's limits is used and when it resets.</li>
+  </ul>
+  <h3>Plan</h3>
+  <p>The plan document, updated live as agents edit it. Click <b>Edit</b> to change it yourself.</p>
+  <h3>Tasks</h3>
+  <ul>
+    <li>Every task: id, title, owner, status and review state. Click a row for its files, what it waits for, and the builder's hand-off note.</li>
+    <li><b>Approve</b> or <b>Send back</b> a task yourself at any time, <b>Restart</b> its review, choose who reviews it (<b>Review by</b>), or <b>change its builder</b> (for example when one agent runs out of usage).</li>
+  </ul>
+  <h3>Branches</h3>
+  <ul>
+    <li>Each agent's copy of the code: how many new commits it has, how far behind main it is, and whether a merge would conflict.</li>
+    <li><b>View changes</b> shows exactly what a merge would bring in. Click any line to leave a comment, then send the comments to the agent as one change request.</li>
+    <li><b>Merge</b> puts a branch into main. <b>Sync</b> brings the latest main into an agent's copy.</li>
+  </ul>
+</section>
+
+<section id="reviews">
+  <h2>Reviews and finishing</h2>
+  <p>With <b>Checks</b> set to Role chain or Any other agent:</p>
+  <ol>
+    <li>A builder reports a task done. The app checks the builder really committed work for it.</li>
+    <li>The task goes to the reviewer(s), who end with <b>approve</b> or <b>changes</b>.</li>
+    <li>Changes send the task back to its builder with the notes. After 3 send-backs it's marked <b>stuck</b> for you to decide.</li>
+    <li>If you set a test command, it must pass.</li>
+    <li>Accepted work is merged into main automatically, and tasks that were waiting on it start.</li>
+  </ol>
+  <p>With Checks Off there is no agent review. If a <b>Tests</b> command is set, passing tests still accept and merge the task. With neither, merge finished work from the <span class="ui">Branches</span> tab, or approve the leader's merge request.</p>
+  <div class="callout tip"><b>Done:</b> when every task is done and merged, the green FINISHED banner shows, with the main commit.</div>
+</section>
+
+<section id="helper">
+  <h2>The App helper</h2>
+  <p>The <span class="ui">Helper</span> tab is a private chat about the app itself, not your project. It can run on any of the agents' CLIs (set the <code>"helper"</code> entry in <code>agents.config.json</code>).</p>
+  <ul>
+    <li><b>Ask anything:</b> what a button does, why something failed, or for a new feature. It sees the server log, errors you've seen and the agents' recent activity. Error messages in the chat have an <b>Ask helper</b> button.</li>
+    <li><b>Allow edits</b> lets it change the app's code in its own copy. Nothing changes until you click <b>Apply &amp; restart</b>, and <b>Undo last update</b> goes back.</li>
+    <li><b>Run my project</b> lets it keep the open project moving while you're away: it approves or rejects requests by your brief and the plan, answers questions that follow from what you already said, nudges stalled agents, restarts paused hand-offs, and starts waiting desktop tests when the computer is idle (never skips them). Every step shows as a ✓ line. Real decisions stay with you.</li>
+  </ul>
+</section>
+
+<section id="problems">
+  <h2>When something goes wrong</h2>
+  <table>
+    <tr><th style="width:30%">You see</th><th>What to do</th></tr>
+    <tr><td>An agent is <b>out of usage</b></td><td>It's skipped until its limit resets. If the CLI said when (Claude, Codex), it rejoins on its own then. If it didn't (Grok often says only "try again later"), click <b>Try now</b> in its panel or message it directly once you think the limit has lifted. Meanwhile, change a task's builder in the Tasks tab, pick another reviewer, or switch to a saved setup.</td></tr>
+    <tr><td>A <b>stall</b> banner</td><td>The agent may be stuck. <b>Keep waiting</b>, <b>Nudge</b> (restart its turn with a hint), or <b>Stop</b>. A local model that's just slow will show this too; raise its <b>Stuck warning after</b> in Setup → Agents (default 6 minutes, 30 with a model server).</td></tr>
+    <tr><td>"The app stopped the chain"</td><td>The agents handed work back and forth 6 times. Send any message to let them carry on, or let the App helper decide.</td></tr>
+    <tr><td>A task is <b>stuck</b></td><td>It was sent back 3 times. Read the review notes in the chat, then Approve, Send back with clearer instructions, or change its builder.</td></tr>
+    <tr><td>A task is <b>blocked</b></td><td>The builder couldn't finish; the reason is in its note. Fix the cause (or tell the agent how) and send a message.</td></tr>
+    <tr><td>A merge <b>conflict</b></td><td>An agent not involved in either side resolves it in a temporary copy; click Merge again afterwards.</td></tr>
+    <tr><td>Anything else</td><td>Click <b>Ask helper</b> on the error, or describe it in the Helper tab.</td></tr>
+  </table>
+</section>
+
+<section id="usage">
+  <h2>Saving usage</h2>
+  <ul>
+    <li>Use faster, cheaper models for routine building and save the most capable ones for planning, debates and hard bugs.</li>
+    <li>Give clear, complete instructions up front: fewer send-backs means fewer turns.</li>
+    <li>Run the App helper on a different CLI from your builder, so they don't share one plan's limit.</li>
+    <li>The usage numbers in the top bar and in each agent's panel show where it's going.</li>
+  </ul>
+</section>
+
+<section id="glossary">
+  <h2>Glossary</h2>
+  <dl>
+    <dt>Agent</dt><dd>One AI coding CLI on the team (Claude Code, Codex, Grok Build…).</dd>
+    <dt>Leader</dt><dd>The agent (or you) who writes the plan and task list and asks for phase changes and merges.</dd>
+    <dt>Branch / working copy</dt><dd>Each agent's own copy of the code, so agents don't overwrite each other.</dd>
+    <dt>Main</dt><dd>The shared, finished version of the code that accepted work is merged into.</dd>
+    <dt>Merge</dt><dd>Putting an agent's finished work into main.</dd>
+    <dt>Send back</dt><dd>Returning a task to its builder with changes to make.</dd>
+    <dt>Hand-off</dt><dd>One agent asking a teammate to take a turn.</dd>
+    <dt>Autonomy</dt><dd>How much an agent may do without asking: read only, edits and dev commands, auto, or full access.</dd>
+  </dl>
+</section>
+
+<footer>Thinktank Studio · This page opens from the <b>?</b> button in the app's top bar.</footer>
+</main>
+</div>
+<script>
+  // Highlight the section you're reading in the contents.
+  const links = [...document.querySelectorAll('nav.toc a')];
+  const byId = new Map(links.map((a) => [a.getAttribute('href').slice(1), a]));
+  const seen = new IntersectionObserver((entries) => {
+    for (const e of entries) {
+      if (!e.isIntersecting) continue;
+      links.forEach((a) => a.classList.remove('active'));
+      byId.get(e.target.id)?.classList.add('active');
+    }
+  }, { rootMargin: '0px 0px -70% 0px' });
+  document.querySelectorAll('main section[id]').forEach((s) => seen.observe(s));
+</script>
+</body>
+</html>

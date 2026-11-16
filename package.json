@@ -1,0 +1,32 @@
+{
+  "name": "thinktank-studio",
+  "version": "0.1.0",
+  "private": true,
+  "description": "AI coding agents from different companies (Claude Code, Codex, Grok, Hermes, local models) plan, debate, build and review together in one chat",
+  "license": "MIT",
+  "type": "module",
+  "bin": {
+    "ttstudio": "scripts/supervisor.mjs"
+  },
+  "scripts": {
+    "start": "node scripts/supervisor.mjs",
+    "mock": "node scripts/supervisor.mjs --mock",
+    "dev": "tsx watch server/index.ts",
+    "start:direct": "tsx server/index.ts",
+    "typecheck": "tsc --noEmit -p ."
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "express": "^4.22.3",
+    "tsx": "^4.23.15",
+    "ws": "^8.22.0"
+  },
+  "devDependencies": {
+    "@types/express": "^4.17.25",
+    "@types/node": "^22.20.5",
+    "@types/ws": "^8.18.2",
+    "typescript": "^5.9.3"
+  }
+}

@@ -1,0 +1,192 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Thinktank Studio</title>
+  <link rel="icon" href="data:," />
+  <link rel="stylesheet" href="style.css" />
+  <script>
+    // Apply the saved theme before first paint so there's no light flash.
+    try {
+      const t = localStorage.getItem('tts-theme');
+      if (t === 'light' || t === 'dark') document.documentElement.dataset.theme = t;
+    } catch {}
+  </script>
+</head>
+<body>
+  <div id="finishedBanner" class="finished-banner" role="status" hidden></div>
+  <header>
+    <strong class="brand">Thinktank Studio</strong>
+    <div class="group">
+      <select id="projectSelect" title="Open one of your projects. Each project has its own code, team chat, plan and task list."><option value="">— open project —</option></select>
+    </div>
+    <div class="group">
+      <span id="liveStatus" class="live-status" role="status"></span>
+      <div class="phases" id="phases">
+        <button data-phase="plan" title="Plan: agents discuss and write the plan together, one at a time. No code yet.">Plan</button>
+        <button data-phase="build" title="Build: each agent works on its own tasks in its own copy of the code, all at the same time.">Build</button>
+        <button data-phase="review" title="Review: agents check each other's work and report problems before you merge it.">Review</button>
+      </div>
+      <button id="stopAll" class="danger" title="Stop every agent right now and cancel anything waiting. Also ends a debate and pauses autopilot.">Stop all</button>
+      <span id="usageTotal" class="usage-total" title="How much the agents have used in this project (tokens are the units AI models count text in)."></span>
+      <button id="resetUsage" class="small" title="Reset this project's usage counters to zero.">Reset usage</button>
+    </div>
+    <button id="setupToggle" aria-expanded="false" aria-controls="setupPanel">Setup</button>
+    <div class="group right">
+      <span id="conn" class="conn">connecting…</span>
+      <select id="theme" class="theme" title="Light or dark colors. System follows your computer's setting.">
+        <option value="system">Theme: system</option>
+        <option value="light">Theme: light</option>
+        <option value="dark">Theme: dark</option>
+      </select>
+      <a id="helpLink" class="help-link" href="help.html" target="_blank" rel="noopener" title="Help: how to use the app, start to finish (opens in a new tab)" aria-label="Help">?</a>
+    </div>
+    <div id="setupPanel" class="setup-panel" hidden>
+      <div class="group">
+        <label title="Who runs the team. The leader speaks first, writes the plan and task list, and can ask to change phase or merge work. Pick You to lead yourself.">Leader <select id="leaderSelect"></select></label>
+        <label class="check" title="Approval gates: when on, the leader must ask you before changing phase or merging code. You approve or reject in a yellow bar above the chat."><input type="checkbox" id="gates" /> Gates</label>
+        <label class="check" title="Autopilot (Build phase): agents keep working through their tasks on their own until they finish, get stuck, or reach the turn limit. When off, each agent takes one turn per message."><input type="checkbox" id="autopilot" /> Autopilot</label>
+      </div>
+      <div class="group review-group">
+        <label title="How finished tasks are checked before they count as done. Off: no review. Role chain: builder → first reviewer → final reviewer (uses the roles on the Agents tab). Any other agent: one review by a different agent.">Checks
+          <select id="reviewMode">
+            <option value="off">Off</option>
+            <option value="chain">Role chain</option>
+            <option value="cross">Any other agent</option>
+          </select>
+        </label>
+        <label title="A command that must pass before a finished task is accepted, e.g. npm test or pytest. It runs in the builder's copy of the code. Leave empty for no test step. Press Enter to save.">Tests
+          <input id="testCmd" placeholder="e.g. npm test" />
+        </label>
+        <button id="testSave" class="small" title="Save the test command.">Save</button>
+        <label title="Optional tests that need the real mouse and screen (e.g. Playwright drag tests). Agents' sandboxes can't run these, so a finished task waits for you to press Run now above the chat; with Run my project on, the App helper presses it when this computer has been idle a few minutes. Press Enter to save.">Desktop tests
+          <input id="desktopCmd" placeholder="e.g. npx playwright test drag" />
+        </label>
+        <button id="desktopSave" class="small" title="Save the desktop test command.">Save</button>
+      </div>
+      <div class="group">
+        <button id="agentsEdit" title="Add, remove or change the AI agents on the team (any number). Saved to agents.config.json.">Agents…</button>
+      </div>
+      <div class="group">
+        <input id="newProject" placeholder="new-project-name" title="Name for a new project: letters, numbers, - and _ only." />
+        <button id="createProject" title="Create a new project: a folder for its code, plus a separate working copy for each agent.">Create</button>
+      </div>
+    </div>
+  </header>
+
+  <nav id="mobileViews" class="mobile-views" aria-label="View">
+    <button data-view="chat" class="active" aria-pressed="true">Chat</button>
+    <button data-view="workspace" aria-pressed="false">Workspace</button>
+  </nav>
+  <main data-view="chat">
+    <section class="chat">
+      <div id="projectInfo" class="project-info">No project open.</div>
+      <div id="requests" class="requests"></div>
+      <div id="messages" class="messages"></div>
+      <button id="newMsgs" class="new-msgs" hidden title="Jump to the newest messages and keep following them.">New messages ↓</button>
+      <div class="attach-tray" id="mainTray" hidden></div>
+      <form id="composer" class="composer">
+        <button type="button" class="attach-btn" id="mainAttach" title="Attach images (PNG, JPG, GIF, WebP, up to 10 MB) or text files such as logs, notes, code and Pine Script (.txt .md .log .json .csv .js .ts .py .pine and more, up to 2 MB). You can also paste or drag files here.">📎 Files</button>
+          <input type="file" id="mainFile" accept="image/png,image/jpeg,image/gif,image/webp,.txt,.md,.log,.json,.jsonl,.csv,.tsv,.yaml,.yml,.toml,.ini,.xml,.html,.css,.scss,.js,.mjs,.cjs,.jsx,.ts,.tsx,.py,.rb,.go,.rs,.java,.kt,.c,.h,.cpp,.hpp,.cs,.swift,.php,.sh,.bash,.zsh,.ps1,.sql,.diff,.patch,.pine" multiple hidden />
+        <select id="toSelect" title="Who gets your message: everyone in the room, or one agent privately (its reply comes back privately too)."></select>
+        <textarea id="input" rows="2" placeholder="Message the team (drop or paste files here too)" title="Type a message. Use @claude, @codex or @grok to talk to specific agents. Enter sends; Shift+Enter adds a new line."></textarea>
+        <div class="composer-actions">
+          <button type="submit" title="Send your message (or press Enter).">Send</button>
+          <button type="button" id="debate" title="Type a question first (attached files go to every agent too). Every agent answers on its own without seeing the others, then they critique each other, then the leader writes the best combined plan.">Debate</button>
+        </div>
+      </form>
+    </section>
+
+    <section class="side">
+      <nav class="tabs" id="tabs">
+        <button data-tab="agents" class="active" title="What each agent is doing right now, plus its settings and Stop button.">Agents</button>
+        <button data-tab="plan" title="The team's plan (PLAN.md). Updates live as agents edit it, and you can edit it too.">Plan</button>
+        <button data-tab="tasks" title="The task list: who does what, which files each task owns, and progress.">Tasks</button>
+        <button data-tab="branches" title="Each agent's copy of the code: see what changed, put finished work into the main version, or bring the latest main version into an agent's copy.">Branches</button>
+        <button data-tab="helper" title="Chat with the helper (Claude, Codex or Grok, set in agents.config.json) about the app itself: problems, fixes, new features">Helper</button>
+      </nav>
+      <div id="tab-agents" class="tab agents">
+        <div id="teamBar" class="plan-bar team-bar"></div>
+        <div id="agentList" class="agent-list"></div>
+      </div>
+      <div id="tab-plan" class="tab plan" hidden>
+        <div class="plan-bar">
+          <span class="muted">team/PLAN.md — updates live as agents edit it</span>
+          <button id="editPlan" title="Edit the plan yourself.">Edit</button>
+          <button id="savePlan" hidden title="Save your changes to the plan.">Save</button>
+          <button id="cancelPlan" hidden title="Throw away your edits to the plan.">Cancel</button>
+        </div>
+        <div id="planView" class="plan-view md"></div>
+        <textarea id="planEdit" class="plan-edit" hidden></textarea>
+      </div>
+      <div id="tab-tasks" class="tab tasks" hidden>
+        <div id="taskList"></div>
+      </div>
+      <div id="tab-helper" class="tab helper" hidden>
+        <div class="plan-bar">
+          <span class="dot" id="helperDot" title="Helper status: grey = ready, orange = working on your message, red = the last request failed."></span>
+          <span class="muted">App helper</span>
+          <label class="check" title="Let the helper change the app's code. Its changes stay in its own copy and don't affect the running app until you click Apply & restart."><input type="checkbox" id="helperEdit" /> Allow edits</label>
+          <label class="check" title="Let the helper run the open project for you: when something waits on you (a request to approve, an agent's question, a stalled agent), it looks within a minute and handles what it can, using the same actions as the buttons. It reports each step here; real decisions stay with you."><input type="checkbox" id="helperOperate" /> Run my project</label>
+          <button id="helperNew" class="small" title="Start a fresh conversation. Any code changes waiting to be applied are kept.">New chat</button>
+        </div>
+        <div id="helperAttention" class="helper-attention" hidden></div>
+        <div id="helperPause" class="helper-pause" role="status" hidden></div>
+        <div id="helperChanges" class="helper-changes" hidden></div>
+        <div id="helperDiff" class="helper-diff" hidden>
+          <div class="plan-bar"><button id="helperDiffBack" title="Back to the conversation.">← Chat</button><span class="muted">Changes the helper made, not applied yet</span></div>
+          <div id="helperDiffBody"></div>
+        </div>
+        <div id="helperMessages" class="messages"></div>
+        <div id="helperActivity" class="helper-activity"></div>
+        <div class="attach-tray" id="helperTray" hidden></div>
+        <form id="helperForm" class="composer">
+          <button type="button" class="attach-btn" id="helperAttach" title="Attach images (PNG, JPG, GIF, WebP, up to 10 MB) or text files such as logs, notes, code and Pine Script (.txt .md .log .json .csv .js .ts .py .pine and more, up to 2 MB). You can also paste or drag files here.">📎 Files</button>
+          <input type="file" id="helperFile" accept="image/png,image/jpeg,image/gif,image/webp,.txt,.md,.log,.json,.jsonl,.csv,.tsv,.yaml,.yml,.toml,.ini,.xml,.html,.css,.scss,.js,.mjs,.cjs,.jsx,.ts,.tsx,.py,.rb,.go,.rs,.java,.kt,.c,.h,.cpp,.hpp,.cs,.swift,.php,.sh,.bash,.zsh,.ps1,.sql,.diff,.patch,.pine" multiple hidden />
+          <textarea id="helperInput" rows="2" title="Ask about the app, describe a problem, or request a feature. Enter sends; Shift+Enter adds a new line." placeholder="e.g. &quot;Grok keeps failing, why?&quot; or &quot;add a button to export the chat&quot;"></textarea>
+          <div class="composer-actions">
+            <button type="submit" title="Send your message to the helper (or press Enter).">Ask</button>
+            <button type="button" id="helperStop" class="danger" hidden title="Stop the helper's current answer.">Stop</button>
+          </div>
+        </form>
+      </div>
+      <div id="tab-branches" class="tab branches" hidden>
+        <div id="branchList"></div>
+        <div id="diffView" class="diff-view" hidden>
+          <div class="plan-bar">
+            <button id="diffBack" title="Back to the list of branches.">← Branches</button>
+            <span id="diffTitle"></span>
+            <button id="diffMerge" title="Put this agent's finished work into the main version of the code.">Merge into main</button>
+          </div>
+          <div id="diffBody"></div>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <div id="restarting" class="restarting" hidden>Restarting the app to load the update…</div>
+  <dialog id="agentsDialog" class="plan-review agents-dialog">
+    <div class="plan-review-head"><b>Team agents</b> <span class="muted">Each agent is an AI command-line program installed on this computer. <a href="help.html#own-agent" target="_blank" rel="noopener">How to add your own</a></span></div>
+    <div id="agentsRows"></div>
+    <div id="agentsError" class="agents-error" hidden></div>
+    <div class="plan-review-actions">
+      <button id="agentsAdd" title="Add another agent row.">+ Add agent</button>
+      <span class="spacer"></span>
+      <button onclick="this.closest('dialog').close()" title="Close without saving.">Cancel</button>
+      <button id="agentsSave" title="Save the team. New agents get their own copy of the open project. Nobody may be working.">Save</button>
+    </div>
+  </dialog>
+  <script src="app.js"></script>
+  <dialog id="planReview" class="plan-review">
+    <div class="plan-review-head"><b>Ready to build?</b> <span class="muted">Check the plan and who does what before the agents start.</span></div>
+    <div id="planReviewBody"></div>
+    <textarea id="planReviewReason" rows="2" placeholder="Not yet? Say what to change (sent to the leader)…" title="Your reason goes to the leader, who can fix the plan and ask again."></textarea>
+    <div class="plan-review-actions">
+      <button id="planReviewBack" class="danger" title="Don't start Build yet; the leader gets your note.">Send back</button>
+      <button id="planReviewCancel" onclick="this.closest('dialog').close()" title="Close without deciding.">Cancel</button>
+      <button id="planReviewStart" title="Start the Build phase: every agent begins its tasks.">Start Build</button>
+    </div>
+  </dialog>
+</body>
+</html>
