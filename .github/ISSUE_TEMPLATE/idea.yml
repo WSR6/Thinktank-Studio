@@ -1,0 +1,19 @@
+name: Idea or feature request
+description: Suggest something new or a better way to do something
+labels: [idea]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: What would you like to do that you can't now?
+    validations:
+      required: true
+  - type: textarea
+    id: idea
+    attributes:
+      label: How do you picture it working?
+  - type: textarea
+    id: extra
+    attributes:
+      label: Anything else?
+      description: Other tools that do it well, screenshots, sketches.

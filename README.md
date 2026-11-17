@@ -118,9 +118,11 @@ Known problems and limits, so they don't surprise you:
 - Easier install: a single download, no Node.js setup
 - More testing on macOS and Linux
 
-## Feedback
+## Feedback and contributing
 
-Bug reports and ideas are welcome in GitHub Issues. Include what you did, what you expected, and the error text the app showed; the **Helper** tab in the app can explain most errors and suggest a fix.
+- **Questions and ideas:** start a thread in [Discussions](../../discussions).
+- **Bugs:** open an [Issue](../../issues/new/choose). Include what you did, what you expected, and the error text the app showed; the **Helper** tab in the app can explain most errors and suggest a fix.
+- **Fixes and features:** pull requests are welcome. See [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## License
 
