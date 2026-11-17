@@ -18,7 +18,7 @@ before(async () => {
 after(() => {
   if (saved === undefined) delete process.env.TTS_AGENTS_CONFIG;
   else process.env.TTS_AGENTS_CONFIG = saved;
-  rmSync(dir, { recursive: true, force: true });
+  rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
 });
 
 const copies = () => readdirSync(dir).filter((f) => f.startsWith('agents.config.json.corrupt-'));

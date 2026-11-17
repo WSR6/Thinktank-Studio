@@ -8,7 +8,7 @@ import { depsOf, handoffsFor, handoffText, isReady, TaskStore } from '../server/
 import type { Task } from '../server/orchestrator/types.js';
 
 const root = mkdtempSync(join(tmpdir(), 'tts-tasks-'));
-after(() => rmSync(root, { recursive: true, force: true }));
+after(() => rmSync(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 }));
 
 function store(name: string, content: string) {
   const teamDir = join(root, name);

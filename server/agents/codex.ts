@@ -290,6 +290,17 @@ export function gitEnv(cwd: string, dirs: string[], inherited = process.env.GIT_
   return [inherited, ...params].filter(Boolean).join(' ');
 }
 
+/**
+ * Trust one of the app's own folders for every git command this process and its agents run. A folder
+ * made while the app ran as administrator is owned by the Administrators group, and git then refuses it
+ * ("detected dubious ownership") when the app later runs as you. Set once, inherited by every child.
+ */
+export function trustGitDir(dir: string, env: NodeJS.ProcessEnv = process.env): void {
+  const entry = `${gitQuote('safe.directory')}=${gitQuote(dir.replace(/\\/g, '/'))}`;
+  const current = env.GIT_CONFIG_PARAMETERS ?? '';
+  if (!current.includes(entry)) env.GIT_CONFIG_PARAMETERS = [current, entry].filter(Boolean).join(' ');
+}
+
 /** A worktree's own git folder, `<repo>/.git/worktrees/<name>`: the one Codex's sandbox locks. */
 const WORKTREE_GITDIR_RE = /[\\/]\.git[\\/]worktrees[\\/][^\\/]+[\\/]?$/;
 

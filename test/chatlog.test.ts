@@ -8,7 +8,7 @@ import { chatContext } from '../server/orchestrator/turns.js';
 import type { ChatMessage } from '../server/types.js';
 
 const dir = mkdtempSync(join(tmpdir(), 'tts-chatlog-'));
-after(() => rmSync(dir, { recursive: true, force: true }));
+after(() => rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 }));
 
 const msg = (i: number, extra: Partial<ChatMessage> = {}): ChatMessage => ({ id: `m${i}`, ts: i, from: 'user', to: 'all', text: `message ${i} ✓`, ...extra });
 const writeLog = (name: string, count: number): string => {

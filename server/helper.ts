@@ -6,6 +6,7 @@ import { homedir } from 'node:os';
 import { basename, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createAdapter } from './agents/index.js';
+import { trustGitDir } from './agents/codex.js';
 import { ATTACHMENT_NOTE, describeAttachments, isImage, validAttachments } from './attachments.js';
 import { classifyFailure, parseResetTime } from './failures.js';
 import { logsSince } from './logbuffer.js';
@@ -196,6 +197,7 @@ export class AppHelper extends EventEmitter {
     this.gitOk = existsSync(join(this.appRoot, '.git'));
     if (this.gitOk) {
       mkdirSync(STATE_DIR, { recursive: true });
+      trustGitDir(this.wtDir); // its folder may have been made by an administrator run of the app
       await runGit(this.appRoot, 'worktree', 'prune');
       if (!existsSync(this.wtDir)) {
         const exists = await runGit(this.appRoot, 'rev-parse', '--verify', '--quiet', BRANCH).then(() => true, () => false);

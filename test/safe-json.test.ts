@@ -11,7 +11,7 @@ import { loadReviews } from '../server/reviews.js';
 import { isRecord, loadJsonFile } from '../server/safe-json.js';
 
 const root = mkdtempSync(join(tmpdir(), 'tts-safe-json-'));
-after(() => rmSync(root, { recursive: true, force: true }));
+after(() => rmSync(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 }));
 let n = 0;
 const dir = () => {
   const d = join(root, `d${n++}`);

@@ -40,6 +40,6 @@ test('ActivityLog: lines go to team/activity/<id>.jsonl and load back', async ()
     again.load(dir, ['a']);
     assert.deepEqual(again.history(['a']).a.map((l) => l.text), ['saved']);
   } finally {
-    rmSync(dir, { recursive: true, force: true });
+    rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
   }
 });

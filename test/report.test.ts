@@ -9,7 +9,7 @@ import { Reporter } from '../server/report.js';
 import { saveReviews } from '../server/reviews.js';
 
 const root = mkdtempSync(join(tmpdir(), 'tts-report-'));
-after(() => rmSync(root, { recursive: true, force: true }));
+after(() => rmSync(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 }));
 
 // Reporter logs to stderr; keep test output readable.
 const quiet = <T>(fn: () => T): T => {
