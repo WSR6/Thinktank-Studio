@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { ASK_RE, DM_RE, DONE_RE, MENTION_RE, OPTIONS_RE, PASS_RE, REQUEST_RE, USER_RE, namesTask } from '../server/orchestrator.js';
+import { ASK_RE, DM_RE, DONE_RE, MENTION_RE, OPTIONS_RE, PASS_RE, REQUEST_RE, USER_RE, findMentions, handoffTargets, namesTask, parseNeedsYou } from '../server/orchestrator/markers.js';
 
 /** All matches of a global pattern, as arrays of capture groups (matchAll works on a copy, so lastIndex never leaks). */
 const all = (re: RegExp, text: string) => [...text.matchAll(re)].map((m) => m.slice(1));
@@ -178,4 +178,35 @@ test('namesTask: ids are matched literally and with their case', () => {
   assert.equal(namesTask('fixed apixv2 today', 'api.v2'), false);
   assert.equal(namesTask('Reviewed T1.', 't1'), false);
   assert.equal(namesTask('about t1.', 't1'), true);
+});
+
+// ── findMentions / handoffTargets / parseNeedsYou ───────────────────────
+
+const team = (id: string) => ['claude', 'codex', 'grok'].includes(id);
+
+test('findMentions: known agents only, lower-cased, each once, e-mail addresses ignored', () => {
+  assert.deepEqual(findMentions('@Codex and @grok, then @codex again; mail a@claude.dev; @nobody', team), ['codex', 'grok']);
+  assert.deepEqual(findMentions('no mentions here', team), []);
+});
+
+test('handoffTargets: a question or a line addressed to a teammate hands off; list items and self-mentions do not', () => {
+  const idle = () => false;
+  assert.deepEqual(handoffTargets('claude', '@codex please run the tests', team, idle), ['codex']);
+  assert.deepEqual(handoffTargets('claude', 'Can @grok check this?', team, idle), ['grok']);
+  assert.deepEqual(handoffTargets('claude', '- t2 (@codex)\n1. @grok owns t3', team, idle), []);
+  assert.deepEqual(handoffTargets('claude', '@claude note to self', team, idle), []);
+});
+
+test('handoffTargets: an agent busy with its own tasks is woken only by a question', () => {
+  const busy = (id: string) => id === 'grok';
+  assert.deepEqual(handoffTargets('claude', '@grok the CLI is ready', team, busy), []);
+  assert.deepEqual(handoffTargets('claude', '@grok is the CLI ready?', team, busy), ['grok']);
+});
+
+test('parseNeedsYou: the @user line (with the question line before it) and up to six options', () => {
+  const r = parseNeedsYou('Built t1.\nWhich database should we use?\n@user please decide\n[[options: Postgres | SQLite | | x | y | z | w]]');
+  assert.equal(r.question, 'Which database should we use?\n@user please decide');
+  assert.deepEqual(r.options, ['Postgres', 'SQLite', 'x', 'y', 'z', 'w']);
+  assert.deepEqual(parseNeedsYou('@user is this ok?'), { question: '@user is this ok?', options: undefined });
+  assert.equal(parseNeedsYou('no flag\nhere').question, 'no flag\nhere');
 });

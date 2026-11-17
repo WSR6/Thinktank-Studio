@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { reviewVerdict } from '../server/orchestrator.js';
+import { reviewVerdict } from '../server/orchestrator/markers.js';
 
 // reviewVerdict is the rule that accepts a reviewed task or sends it back. (parseVerdict in
 // reviews.ts is the simpler one, used for line comments; see reviews.test.ts.)
