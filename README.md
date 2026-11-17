@@ -69,6 +69,15 @@ Then, in the app:
 3. Click **Build**. You see the plan and the tasks first; start it, and each agent works on its own tasks.
 4. Finished tasks are reviewed by another agent and merged into main. You can step in at any point: approve, send back, comment on lines, or take over.
 
+**Want your projects somewhere else?** Set `TTS_PROJECTS_DIR` to another folder before starting the app. All projects then go there.
+
+```bash
+TTS_PROJECTS_DIR="/path/to/my-projects" npm start      # macOS / Linux
+$env:TTS_PROJECTS_DIR="D:\MyProjects"; npm start        # Windows PowerShell
+```
+
+Projects already made stay in the old folder. To keep using them, move their folders into the new one; the app repairs the agents' working copies when it opens a moved project. Avoid OneDrive/Dropbox-synced and network folders: syncing and slow file locks can break git.
+
 The **?** button in the app opens a full help page, written for first-time users. Every feature is described in detail in [docs/reference.md](docs/reference.md).
 
 **Platforms:** developed and used daily on Windows 11. macOS and Linux should work (nothing in the app is Windows-only) but are tested less.

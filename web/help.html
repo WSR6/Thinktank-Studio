@@ -173,6 +173,7 @@ footer { color: var(--muted); font-size: 14px; border-top: 1px solid var(--borde
     <li><strong>Finished</strong>When every task is done and merged, the green <b>FINISHED</b> banner appears. Your code is in the project's <code>repo</code> folder.</li>
   </ol>
   <div class="callout"><b>Coming back later?</b> The last project reopens when you start the app. If agents were cut off mid-work, a banner offers <b>Continue</b>.</div>
+  <div class="callout tip"><b>Where projects are saved:</b> each project gets its own folder in <code>ThinktankProjects</code> in your home folder. To use a different folder, set <code>TTS_PROJECTS_DIR</code> before starting the app: on Windows PowerShell <code>$env:TTS_PROJECTS_DIR="D:\MyProjects"; npm start</code>, on macOS or Linux <code>TTS_PROJECTS_DIR="/path/to/my-projects" npm start</code>. Projects already made stay in the old folder; move their folders into the new one to keep using them (the app repairs the agents' working copies when it opens a moved project). Avoid OneDrive/Dropbox-synced and network folders: syncing and slow file locks can break git.</div>
 </section>
 
 <section id="phases">
