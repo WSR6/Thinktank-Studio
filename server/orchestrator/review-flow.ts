@@ -52,15 +52,33 @@ export interface ReviewHost {
   nameOf(id: string): string;
   system(text: string): void;
   notice(text: string): void;
+  /** Log an error; with `text`, also tell the user (see Reporter). */
+  report(key: string, e: unknown, text?: string): void;
   emitAgent(agentId: string, event: AgentEvent): void;
   emit(event: 'state'): void;
   saveMeta(): void;
 }
 
+const REVIEW_STEP_FAILED =
+  'A review step for finished tasks failed, so a task may sit in review with nothing happening. In the Tasks tab you can Restart its review or Approve it yourself';
+const SAVE_REVIEWS_FAILED = "Couldn't save review progress to team/reviews.json; it's kept in memory, but would be lost if the app closed now";
+
 export class ReviewFlow {
   reviews: Reviews = {};
   /** Review steps run one at a time, so two triggers can't race. */
   reviewQueue: Promise<void> = Promise.resolve();
+
+  /**
+   * Run a review step after the ones already queued. A step that fails is logged and you're told
+   * (a task may otherwise sit in review with nothing happening); the queue carries on either way.
+   */
+  queue(step: () => unknown): Promise<void> {
+    this.reviewQueue = this.reviewQueue.then(step).then(
+      () => undefined,
+      (e) => this.o.report('review step', e, REVIEW_STEP_FAILED),
+    );
+    return this.reviewQueue;
+  }
   /** Reviews already reported as waiting for an unavailable reviewer (task:stage:agent). */
   private parkNoticed = new Set<string>();
   /** When each task last passed review (ms), to spot a reopen from a turn that started before that. */
@@ -149,7 +167,7 @@ export class ReviewFlow {
    * a task reopened by its owner cancels its review. Serialized so two triggers can't race.
    */
   advanceReviews(): void {
-    this.reviewQueue = this.reviewQueue.then(() => this.advanceReviewsNow()).catch((e) => console.error('review update failed:', e));
+    void this.queue(() => this.advanceReviewsNow());
   }
 
   private async advanceReviewsNow(): Promise<void> {
@@ -232,11 +250,12 @@ export class ReviewFlow {
       void Promise.all(this.o.pendingSetup([dir]))
         .then(() => runTests(this.o.testCommand, dir))
         .then((result) => {
-        if (gen !== this.o.gen) return;
-        this.reviewQueue = this.reviewQueue
-          .then(() => this.applyVerdict(t.id, 'tests', 'tests', result.ok ? 'approve' : 'changes', result.ok ? 'Tests passed.' : result.output))
-          .catch(console.error);
-      });
+          if (gen !== this.o.gen) return;
+          void this.queue(() => this.applyVerdict(t.id, 'tests', 'tests', result.ok ? 'approve' : 'changes', result.ok ? 'Tests passed.' : result.output));
+        })
+        .catch((e) =>
+          this.o.report(`tests for ${t.id}`, e, `The tests for ${t.id} couldn't be run, so it waits in review. In the Tasks tab you can Restart its review or Approve it yourself.`),
+        );
       return;
     }
     let reviewer = this.reviewerFor(stage, owner, rec);
@@ -292,10 +311,13 @@ export class ReviewFlow {
     this.o.system(`${t.id} "${t.title ?? ''}" → ${STAGE_LABELS[stage]} by ${this.o.nameOf(reviewer)}.`);
     // A fresh checkout of their branch to run and test, so the reviewer never merges it into its own.
     const checkout = await this.o.reviewCheckout(owner, reviewer).catch((e) => {
-      console.error('review checkout:', e);
+      this.o.report('review checkout', e, `Couldn't prepare a fresh copy of ${this.o.nameOf(owner)}'s branch for ${this.o.nameOf(reviewer)} to review ${t.id}, so it reviews without one`);
       return undefined;
     });
-    rec.reviewedTip = await branchTip(this.o.project, owner).catch(() => rec.reviewedTip);
+    rec.reviewedTip = await branchTip(this.o.project, owner).catch((e) => {
+      this.o.report('branch tip', e); // keeps the tip from the last review; only matters for which commit gets merged
+      return rec.reviewedTip;
+    });
     // Stamped only now: a turn the reviewer started while the checkout (and its setup) was being
     // prepared, e.g. its own build turn, isn't the review and mustn't count as one.
     rec.askedAt = Date.now();
@@ -333,12 +355,10 @@ export class ReviewFlow {
     }
     if (!entry || elsewhere) {
       // Not the assigned reviewer (or not this task): a stand-in's verdict still counts (see applyStandInVerdict).
-      this.reviewQueue = this.reviewQueue
-        .then(async () => {
-          if (verdict) await this.applyStandInVerdict(id, text, verdict, openAtStart, markerTask);
-          if (elsewhere) await this.dispatchParked();
-        })
-        .catch(console.error);
+      void this.queue(async () => {
+        if (verdict) await this.applyStandInVerdict(id, text, verdict, openAtStart, markerTask);
+        if (elsewhere) await this.dispatchParked();
+      });
       return;
     }
     const [taskId, rec] = entry;
@@ -349,7 +369,7 @@ export class ReviewFlow {
       rec.history.push({ ts: Date.now(), by: id, stage, verdict: 'none', notes: 'Already approved an earlier stage this round.' });
       rec.waitingOn = undefined;
       this.o.notice(`${this.o.nameOf(id)} already approved ${taskId} this round, so its approval of the ${STAGE_LABELS[stage]} doesn't count; another agent or you must do it.`);
-      this.reviewQueue = this.reviewQueue.then(() => this.dispatchParked()).catch(console.error);
+      void this.queue(() => this.dispatchParked());
       this.saveReviewState();
       return;
     }
@@ -370,7 +390,7 @@ export class ReviewFlow {
       this.saveReviewState();
       return;
     }
-    this.reviewQueue = this.reviewQueue.then(() => this.applyVerdict(taskId, id, stage, verdict, notes)).catch(console.error);
+    void this.queue(() => this.applyVerdict(taskId, id, stage, verdict, notes));
   }
 
   /**
@@ -501,7 +521,7 @@ export class ReviewFlow {
     }
     rec.status = 'changes';
     this.o.attempts[t.id] = this.o.attemptOf(t.id) + 1;
-    this.o.sentBack[t.id] = { at: Date.now(), tip: owner ? await branchTip(this.o.project!, owner).catch(() => undefined) : undefined };
+    this.o.sentBack[t.id] = { at: Date.now(), tip: owner ? await this.tipOrNone(owner) : undefined };
     this.o.saveMeta();
     await this.o.updateTask(t.id, { status: 'doing', note: `Changes requested by ${who}` });
     this.o.system(`↩ ${t.id} sent back to ${this.o.nameOf(owner)} by ${who} (round ${rec.rounds}).`);
@@ -563,7 +583,13 @@ export class ReviewFlow {
       rec.askedAt = NOT_ASKED_YET;
       this.o.system(`${taskId} "${task.title ?? ''}" → ${STAGE_LABELS[stage]} by ${this.o.nameOf(by)} (your pick).`);
       const owner = task.owner ?? '';
-      const checkout = this.o.project && owner ? await this.o.reviewCheckout(owner, by).catch(() => undefined) : undefined;
+      const checkout =
+        this.o.project && owner
+          ? await this.o.reviewCheckout(owner, by).catch((e) => {
+              this.o.report('review checkout', e, `Couldn't prepare a fresh copy of ${this.o.nameOf(owner)}'s branch for ${this.o.nameOf(by)} to review ${taskId}, so it reviews without one`);
+              return undefined;
+            })
+          : undefined;
       rec.askedAt = Date.now(); // see dispatchStage
       void this.o.enqueue(by, {
         instruction: this.reviewInstruction(task, stage, rec, checkout?.dir),
@@ -617,7 +643,7 @@ export class ReviewFlow {
     // A new attempt, so a late report from the old builder is stale; its commit baseline is the new builder's
     // branch now, so only work from here on counts (and the done check has a tip to compare with).
     this.o.attempts[taskId] = this.o.attemptOf(taskId) + 1;
-    this.o.sentBack[taskId] = { at: Date.now(), tip: await branchTip(this.o.project!, to).catch(() => undefined) };
+    this.o.sentBack[taskId] = { at: Date.now(), tip: await this.tipOrNone(to) };
     this.o.saveMeta();
     this.saveReviewState();
     this.o.system(`${taskId} "${task.title ?? ''}" → builder is now ${this.o.nameOf(to)} (your pick), review restarted.`);
@@ -628,8 +654,19 @@ export class ReviewFlow {
     this.advanceReviews();
   }
 
+  /**
+   * The branch's tip commit, or undefined when git can't tell (logged): the done check then has no
+   * baseline to compare with and goes by the agent's report alone.
+   */
+  private async tipOrNone(agent: string): Promise<string | undefined> {
+    return branchTip(this.o.project!, agent).catch((e) => {
+      this.o.report('branch tip', e);
+      return undefined;
+    });
+  }
+
   saveReviewState(): void {
-    if (this.o.project) void saveReviews(this.o.project.teamDir, this.reviews);
+    if (this.o.project) void saveReviews(this.o.project.teamDir, this.reviews, (e) => this.o.report('save reviews', e, SAVE_REVIEWS_FAILED));
     this.o.emit('state');
   }
 }

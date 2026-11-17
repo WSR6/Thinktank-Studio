@@ -14,7 +14,7 @@ const parses = (path: string): boolean => {
     JSON.parse(decodeText(readFileSync(path)));
     return true;
   } catch {
-    return false;
+    return false; // the answer to "does it parse?", not an error
   }
 };
 

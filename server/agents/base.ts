@@ -101,7 +101,7 @@ export function runProcess(o: ProcOptions): ProcHandle {
     if (child.exitCode !== null) return;
     // On Windows the child is cmd.exe; killing it alone leaves the CLI running and holding our
     // pipes, so the turn never ends. Kill the whole tree instead.
-    if (process.platform === 'win32' && child.pid) execFile('taskkill', ['/pid', String(child.pid), '/T', '/F'], () => {});
+    if (process.platform === 'win32' && child.pid) execFile('taskkill', ['/pid', String(child.pid), '/T', '/F'], () => {}); // fails only if the tree already exited
     else child.kill('SIGTERM');
   };
   return {
@@ -140,7 +140,7 @@ export function safeJson(line: string): any | undefined {
   try {
     return JSON.parse(line);
   } catch {
-    return undefined;
+    return undefined; // CLIs mix plain text into their JSON output: those lines just aren't events
   }
 }
 

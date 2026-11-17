@@ -23,7 +23,7 @@ function load(): Record<string, PlanLimits> {
   try {
     cache = JSON.parse(readFileSync(FILE, 'utf8'));
   } catch {
-    cache = {};
+    cache = {}; // display only: the next usage report from each CLI fills it again
   }
   // First run: take Codex's numbers from its newest session file, in the background.
   if (!cache!.codex) void codexLimits().then((l) => l && !cache!.codex && (cache!.codex = l));
@@ -114,12 +114,13 @@ export async function codexLimits(threadId?: string): Promise<PlanLimits | undef
   return undefined;
 }
 
+// A folder that's missing or unreadable just has nothing to search (usage display only).
 const newestFirst = async (dir: string) => (await readdir(dir).catch(() => [] as string[])).sort().reverse();
 
 /** sessions/YYYY/MM/DD/rollout-…-<threadId>.jsonl. A resumed thread stays in the folder of the day it began, so look through every day. */
 async function findThreadFile(root: string, threadId: string): Promise<string | undefined> {
   const known = sessionPaths.get(threadId);
-  if (known && (await stat(known).catch(() => null))) return known;
+  if (known && (await stat(known).catch(() => null))) return known; // gone: search again below
   for (const y of await newestFirst(root))
     for (const m of await newestFirst(join(root, y)))
       for (const d of await newestFirst(join(root, y, m))) {
@@ -142,6 +143,7 @@ async function newestSessionFile(root: string): Promise<string | undefined> {
         if (++days > 7) return undefined;
         const dir = join(root, y, m, d);
         const files = (await newestFirst(dir)).filter((f) => f.endsWith('.jsonl'));
+        // A file removed while listing is just skipped (t = -1).
         const stamped = await Promise.all(files.map(async (f) => ({ f, t: (await stat(join(dir, f)).catch(() => null))?.mtimeMs ?? -1 })));
         const best = stamped.filter((s) => s.t >= 0).sort((a, b) => b.t - a.t)[0];
         if (best) return join(dir, best.f);

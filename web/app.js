@@ -22,6 +22,11 @@ const AUTONOMY = [
 let ws;
 let state = { project: null, leader: 'user', phase: 'plan', gates: true, requests: [], agents: [] };
 let messages = [];
+/** Older chat messages exist than the ones on the page (the server sends the newest CHAT_PAGE_SIZE). */
+let earlierMessages = false;
+let loadingEarlier = false;
+const CHAT_PAGE_SIZE = 200;
+const MAX_CHAT_ON_PAGE = 1000;
 let branches = [];
 let team = { plan: '', tasks: '' };
 let editingPlan = false;
@@ -68,14 +73,36 @@ function handle(m) {
       break;
     case 'messages':
       messages = m.messages;
+      earlierMessages = Boolean(m.earlier);
+      loadingEarlier = false;
       renderMessages();
+      break;
+    case 'earlier_messages':
+      // An answer for a list that has changed since (project switch, reconnect, trimmed while following):
+      // don't prepend it, but let the button work again.
+      if (m.before !== messages[0]?.id) {
+        loadingEarlier = false;
+        const b = document.querySelector('.earlier-bar button');
+        if (b) Object.assign(b, { disabled: false, textContent: 'Load earlier messages' });
+        break;
+      }
+      messages = [...m.messages, ...messages];
+      earlierMessages = Boolean(m.earlier);
+      loadingEarlier = false;
+      renderMessages(true);
       break;
     case 'projects':
       renderProjects(m.projects);
       break;
     case 'message':
       messages.push(m.message);
-      appendMessage(m.message);
+      // A page left open for days: keep the chat light by dropping the oldest from the page
+      // (they stay in the project's history and come back with "Load earlier messages").
+      if (messages.length > MAX_CHAT_ON_PAGE && followChat) {
+        messages = messages.slice(-CHAT_PAGE_SIZE);
+        earlierMessages = true;
+        renderMessages();
+      } else appendMessage(m.message);
       break;
     case 'agent_event':
       onAgentEvent(m.agentId, m.event);
@@ -134,6 +161,11 @@ function handle(m) {
       $('#agentsDialog').close();
       break;
     case 'error':
+      if (loadingEarlier) {
+        loadingEarlier = false;
+        const b = document.querySelector('.earlier-bar button');
+        if (b) Object.assign(b, { disabled: false, textContent: 'Load earlier messages' });
+      }
       if ($('#agentsDialog').open && agentsSaving) {
         agentsSaving = false;
         $('#agentsError').textContent = m.error;
@@ -230,12 +262,46 @@ function renderHelperAttention() {
   bar.append(text, button);
 }
 
-/** Full redraw only on project open/reconnect; live messages are appended so your scroll position stays put. */
-function renderMessages() {
-  $('#messages').innerHTML = '';
+/**
+ * Full redraw only on project open/reconnect (or after loading earlier messages); live messages are
+ * appended so your scroll position stays put. `keepPlace`: older messages were added on top, so keep
+ * what you were looking at where it was.
+ */
+function renderMessages(keepPlace = false) {
+  const box = $('#messages');
+  const fromBottom = box.scrollHeight - box.scrollTop;
+  const newHidden = $('#newMsgs').hidden;
+  box.innerHTML = '';
+  if (earlierMessages) box.appendChild(earlierBar());
+  const follow = followChat;
+  followChat = false; // no scrolling per message while redrawing
   messages.forEach(appendMessage);
-  followChat = true;
-  scrollChatToEnd();
+  if (keepPlace) {
+    followChat = follow;
+    box.scrollTop = box.scrollHeight - fromBottom;
+    $('#newMsgs').hidden = newHidden;
+  } else {
+    followChat = true;
+    scrollChatToEnd();
+  }
+}
+
+/** The "Load earlier messages" button above the oldest message shown. */
+function earlierBar() {
+  const bar = document.createElement('div');
+  bar.className = 'earlier-bar';
+  const b = document.createElement('button');
+  b.textContent = loadingEarlier ? 'Loading…' : 'Load earlier messages';
+  b.title = `Show the ${CHAT_PAGE_SIZE} messages before these. The whole chat is also saved in the project's team/chat.jsonl.`;
+  b.disabled = loadingEarlier || !messages.length;
+  b.onclick = () => {
+    loadingEarlier = true;
+    b.disabled = true;
+    b.textContent = 'Loading…';
+    send({ type: 'load_earlier', before: messages[0].id });
+  };
+  bar.appendChild(b);
+  return bar;
 }
 
 // Follow new messages unless you've scrolled up to read; "New messages ↓" brings you back.

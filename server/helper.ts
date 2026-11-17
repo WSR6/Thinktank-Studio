@@ -3,7 +3,7 @@ import { EventEmitter } from 'node:events';
 import { existsSync, mkdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { appendFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
-import { join, resolve } from 'node:path';
+import { basename, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createAdapter } from './agents/index.js';
 import { ATTACHMENT_NOTE, describeAttachments, isImage, validAttachments } from './attachments.js';
@@ -11,6 +11,8 @@ import { classifyFailure, parseResetTime } from './failures.js';
 import { logsSince } from './logbuffer.js';
 import { OPERATOR_RULES, parseActions, type OperatorAction, type ProjectView } from './operator.js';
 import { diffWithWorktree, gitIdentity, runGit } from './project.js';
+import { isRecord, loadJsonFile, mayWrite } from './safe-json.js';
+import { errText, logOnce } from './report.js';
 import type { AgentAdapter, AgentConfig, AgentStatus, Turn } from './types.js';
 
 /**
@@ -65,7 +67,8 @@ interface HelperState {
 
 export interface HelperContext {
   /** Recent failures/notices from the team room, so the helper sees what you saw. */
-  recentIssues: () => string[];
+  /** Notices shown to the user, with their absolute chat message numbers. */
+  recentIssues: () => { at: number; text: string }[];
   /** The open project's folders; the helper may read them (never change them) when debugging. */
   project: () => { root: string; teamDir: string; repoDir: string; agentDirs: Record<string, string> } | undefined;
   /** Agents' recent activity (tool calls, CLI output, failures) since the given cursors. */
@@ -88,6 +91,8 @@ export class AppHelper extends EventEmitter {
   private current?: Turn;
   private logCursor = 0;
   private issuesSeen = 0;
+  /** The project `issuesSeen` counts in. */
+  private issuesProject?: string;
   private activityCursors?: Record<string, number>;
   private gitOk = false;
   private ready: Promise<void>;
@@ -142,7 +147,10 @@ export class AppHelper extends EventEmitter {
       gitOk: this.gitOk,
       supervised: this.supervised,
       undoAvailable: Boolean(this.state.undo),
-      changes: await this.changes().catch(() => ({ files: [] as string[], ahead: 0 })),
+      changes: await this.changes().catch((e) => {
+        logOnce('helper changes', e); // shown as no changes; gitOk tells the page when git itself is missing
+        return { files: [] as string[], ahead: 0 };
+      }),
     };
   }
 
@@ -158,11 +166,13 @@ export class AppHelper extends EventEmitter {
   // ── Setup ─────────────────────────────────────────────────────────────
 
   private load(): void {
-    try {
-      if (existsSync(STATE_FILE)) this.state = { ...this.state, ...JSON.parse(readFileSync(STATE_FILE, 'utf8')) };
-    } catch {
-      /* start fresh */
-    }
+    const saved = loadJsonFile<Partial<HelperState>>(STATE_FILE, {}, {
+      label: `The helper's chat file (.thinktank/${basename(STATE_FILE)} in your home folder)`,
+      what: 'the helper starts a new chat',
+      valid: (v) => isRecord(v) && (v.messages === undefined || Array.isArray(v.messages)),
+    });
+    this.state = { ...this.state, ...saved.value };
+    if (saved.problem) this.post('system', `⚠ ${saved.problem}`);
     // The helper's CLI changed (or an older file without the tag): start a new session for this CLI.
     if ((this.state.sessionAdapter ?? 'claude') !== this.sessionTag && (this.state.sessionId || this.state.messages.length)) {
       this.state.sessionId = undefined;
@@ -174,6 +184,7 @@ export class AppHelper extends EventEmitter {
   }
 
   private save(): void {
+    if (!mayWrite(STATE_FILE)) return; // damaged and no copy could be kept: the chat stays in memory only
     mkdirSync(STATE_DIR, { recursive: true });
     this.state.messages = this.state.messages.slice(-MAX_MESSAGES);
     writeFileSync(STATE_FILE, JSON.stringify(this.state, null, 2));
@@ -238,10 +249,15 @@ export class AppHelper extends EventEmitter {
       const logs = logsSince(fresh ? 0 : this.logCursor, fresh ? 60 : 80);
       this.logCursor = logs.cursor;
       const issues = this.ctx.recentIssues();
-      const newIssues = issues.slice(fresh ? -10 : this.issuesSeen);
+      // Message numbers are per project: after a project switch, start from that project's recent notices.
+      const root = this.ctx.project()?.root;
+      const sameProject = root === this.issuesProject;
+      this.issuesProject = root;
+      if (!sameProject) this.issuesSeen = 0; // even when this project has no notices yet
+      const newIssues = (fresh || !sameProject ? issues.slice(-10) : issues.filter((i) => i.at >= this.issuesSeen)).map((i) => i.text);
       const activity = this.ctx.activitySince(fresh ? undefined : this.activityCursors);
       this.activityCursors = activity.cursors;
-      this.issuesSeen = issues.length;
+      if (issues.length) this.issuesSeen = issues[issues.length - 1].at + 1;
       const view = this.state.operate ? this.ctx.view() : undefined;
       const prompt = [
         fresh ? this.preamble() : '',
@@ -548,7 +564,7 @@ ${
     const { files } = await this.changes();
     if (files.length) return;
     const head = (await runGit(this.appRoot, 'rev-parse', 'HEAD')).stdout.trim();
-    await runGit(this.wtDir, 'reset', '--hard', head).catch(() => {});
+    await runGit(this.wtDir, 'reset', '--hard', head).catch((e) => console.error(`helper: couldn't move its copy to the app's latest version: ${errText(e)}`));
   }
 
   /**
@@ -582,7 +598,7 @@ ${
     try {
       await runGit(this.appRoot, ...(await gitIdentity(this.appRoot)), 'merge', '--no-edit', BRANCH);
     } catch (err) {
-      await runGit(this.appRoot, 'merge', '--abort').catch(() => {});
+      await runGit(this.appRoot, 'merge', '--abort').catch(() => {}); // cleanup after the failure thrown below; fails only if no merge was left in progress
       throw new Error(`Couldn't merge the update: ${(err as Error).message.slice(0, 300)}`);
     }
     const applied = (await runGit(this.appRoot, 'rev-parse', 'HEAD')).stdout.trim();
@@ -661,7 +677,7 @@ ${
     this.state.messages.push(msg);
     this.emit('message', msg);
     this.save();
-    appendFile(join(STATE_DIR, 'helper-log.jsonl'), JSON.stringify(msg) + '\n').catch(() => {});
+    appendFile(join(STATE_DIR, 'helper-log.jsonl'), JSON.stringify(msg) + '\n').catch((e) => logOnce('helper-log.jsonl', e)); // a debugging log; the chat itself is saved by save()
   }
 
   private setStatus(s: AgentStatus): void {

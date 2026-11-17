@@ -1,6 +1,7 @@
 import { existsSync, readFileSync, renameSync, writeFileSync, copyFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import type { AgentConfig } from './types.js';
+import { isRecord, loadJsonFile, mayWrite } from './safe-json.js';
 
 // TTS_AGENTS_CONFIG points at another file (tests, or a second team on the same machine).
 const CONFIG_PATH = process.env.TTS_AGENTS_CONFIG || fileURLToPath(new URL('../agents.config.json', import.meta.url));
@@ -14,7 +15,13 @@ function readFile(): any {
 
 /** The App helper's CLI (Claude Code by default); override with a "helper" entry in agents.config.json. */
 export function loadHelperConfig(): AgentConfig {
-  const parsed = readFile();
+  let parsed: any = {};
+  try {
+    parsed = readFile();
+  } catch (e) {
+    // Only if the damaged file couldn't be replaced (loadAgentConfigs already reported it): default helper.
+    console.error(`agents.config.json: ${(e as Error).message}; using the default App helper`);
+  }
   const cfg: AgentConfig = { id: 'helper', name: 'App helper', adapter: 'claude', command: 'claude', ...parsed.helper };
   // For testing another CLI without editing the file: TTS_HELPER_ADAPTER=codex|grok (command = adapter), TTS_HELPER_MODEL.
   const env = process.env.TTS_HELPER_ADAPTER;
@@ -60,13 +67,45 @@ export function validateAgentConfigs(agents: unknown): AgentConfig[] {
   return agents as AgentConfig[];
 }
 
-export function loadAgentConfigs(): AgentConfig[] {
+/** The team used when agents.config.json is damaged and there's no usable .bak: the three main CLIs, their default models. */
+export const DEFAULT_AGENTS: AgentConfig[] = [
+  { id: 'claude', name: 'Claude', adapter: 'claude', command: 'claude', autonomy: 'edits', color: '#d97757' },
+  { id: 'codex', name: 'Codex', adapter: 'codex', command: 'codex', autonomy: 'edits', color: '#10a37f' },
+  { id: 'grok', name: 'Grok', adapter: 'grok', command: 'grok', autonomy: 'auto', color: '#8b8bf5' },
+];
+
+/**
+ * The team from agents.config.json. If the file isn't valid JSON, it's moved aside (kept as
+ * .corrupt-<time>) and replaced by the last saved version (.bak) when that one is good, else by
+ * DEFAULT_AGENTS; onProblem gets a sentence for the user. A file that parses but has a mistake in an
+ * agent still stops with that mistake, since guessing would hide it.
+ */
+export function loadAgentConfigs(onProblem: (text: string) => void = () => {}): AgentConfig[] {
   if (!existsSync(CONFIG_PATH)) throw new Error(`Missing ${CONFIG_PATH}`);
-  return validateAgentConfigs(readFile().agents ?? []);
+  const loaded = loadJsonFile<any>(CONFIG_PATH, undefined, { label: 'agents.config.json', what: 'the team was set up again', valid: isRecord });
+  if (!loaded.problem) return validateAgentConfigs(loaded.value.agents ?? []);
+  let recovered: { agents: AgentConfig[]; helper?: unknown };
+  let from = 'the default team (Claude, Codex, Grok); add or change agents in Setup → Agents';
+  try {
+    const bak = JSON.parse(readFileSync(`${CONFIG_PATH}.bak`, 'utf8'));
+    recovered = { ...bak, agents: validateAgentConfigs(bak.agents) };
+    from = 'its last saved version (agents.config.json.bak)';
+  } catch {
+    recovered = { agents: DEFAULT_AGENTS.map((a) => ({ ...a })) }; // no .bak, or it's no good either
+  }
+  try {
+    // Written only when the damaged file was kept aside (else it stays as it is; see mayWrite).
+    if (mayWrite(CONFIG_PATH)) writeFileSync(CONFIG_PATH, JSON.stringify(recovered, null, 2) + '\n');
+  } catch (e) {
+    console.error(`Couldn't write ${CONFIG_PATH}: ${(e as Error).message}`);
+  }
+  onProblem(`${loaded.problem.replace('the team was set up again', `the team was set up again from ${from}`)}`);
+  return recovered.agents;
 }
 
 /** Saves the agent list, keeping the rest of the file (the helper entry); the old file goes to .bak. */
 export function saveAgentConfigs(agents: AgentConfig[]): void {
+  if (!mayWrite(CONFIG_PATH)) throw new Error("agents.config.json couldn't be read or kept aside, so it isn't saved over. Fix or delete it, then restart the app.");
   const parsed = readFile();
   parsed.agents = agents;
   if (existsSync(CONFIG_PATH)) copyFileSync(CONFIG_PATH, `${CONFIG_PATH}.bak`);

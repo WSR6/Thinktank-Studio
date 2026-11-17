@@ -1,5 +1,5 @@
 import { exec, execFile } from 'node:child_process';
-import { existsSync, readFileSync } from 'node:fs';
+import { copyAside, isRecord, loadJsonFile, mayWrite, protect } from './safe-json.js';
 import { rename, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 
@@ -49,25 +49,49 @@ export const STAGE_LABELS: Record<StageKind, string> = {
   desktop: 'desktop tests',
 };
 
-export function loadReviews(teamDir: string): Reviews {
-  const file = join(teamDir, 'reviews.json');
-  try {
-    return existsSync(file) ? JSON.parse(readFileSync(file, 'utf8')) : {};
-  } catch {
-    return {};
+const isEntry = (e: any): e is ReviewEntry =>
+  isRecord(e) && typeof e.status === 'string' && Array.isArray(e.stages) && Number.isInteger(e.stage) && Array.isArray(e.history);
+
+/**
+ * team/reviews.json. A damaged file is moved aside and the reviews start over (onProblem tells the
+ * user); single damaged entries are dropped so they can't break the review pipeline.
+ */
+export function loadReviews(teamDir: string, onProblem: (text: string) => void = () => {}): Reviews {
+  const { value, problem } = loadJsonFile<Reviews>(join(teamDir, 'reviews.json'), {}, {
+    label: 'team/reviews.json',
+    what: 'the review progress of finished tasks starts over',
+    valid: isRecord,
+  });
+  if (problem) onProblem(problem);
+  const good = Object.entries(value).filter(([, e]) => isEntry(e));
+  const dropped = Object.keys(value).length - good.length;
+  if (dropped) {
+    // The next save writes the list without them: keep the file as it is now first.
+    const file = join(teamDir, 'reviews.json');
+    const copy = copyAside(file);
+    if (!copy) protect(file); // no copy: don't let the next save write the list without them
+    onProblem(
+      `${dropped} damaged entr${dropped === 1 ? 'y' : 'ies'} in team/reviews.json ${dropped === 1 ? 'was' : 'were'} skipped; those tasks' reviews start over when they're marked done again.` +
+        (copy
+          ? ` The file as it was is kept as ${copy}.`
+          : " No copy of the file could be kept, so the app won't save review progress over it; fix or delete it, then restart the app."),
+    );
   }
+  return Object.fromEntries(good);
 }
 
 let writing: Promise<void> = Promise.resolve();
-export function saveReviews(teamDir: string, reviews: Reviews): Promise<void> {
+/** Saves are queued (tmp + rename). `onError`: a failed save (logged by default). */
+export function saveReviews(teamDir: string, reviews: Reviews, onError: (e: unknown) => void = console.error): Promise<void> {
   const file = join(teamDir, 'reviews.json');
   const data = JSON.stringify(reviews, null, 2);
   writing = writing
     .then(async () => {
+      if (!mayWrite(file)) return; // damaged and no copy could be kept: leave it for the user
       await writeFile(file + '.tmp', data);
       await rename(file + '.tmp', file);
     })
-    .catch(console.error);
+    .catch(onError);
   return writing;
 }
 
@@ -96,6 +120,7 @@ export function runTests(command: string, cwd: string, onStart?: (kill: () => vo
     });
     // On Windows the child is a shell: end the whole tree (e.g. Playwright and its browser).
     const killTree = () => {
+      // No callback error to act on: if the tree is already gone there's nothing left to stop.
       if (process.platform === 'win32' && child.pid) execFile('taskkill', ['/pid', String(child.pid), '/T', '/F'], () => {});
       else child.kill('SIGTERM');
     };

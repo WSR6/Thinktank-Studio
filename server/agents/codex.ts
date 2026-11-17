@@ -49,7 +49,7 @@ function shareSandboxSetup(dir: string): void {
     try {
       return realpathSync.native(p).toLowerCase();
     } catch {
-      return resolve(p).toLowerCase();
+      return resolve(p).toLowerCase(); // doesn't exist (yet): compare the plain path
     }
   };
   const home = userCodexHome();
@@ -163,7 +163,7 @@ export function userWindowsSandbox(text?: string): string | undefined {
     try {
       text = readFileSync(file, 'utf8');
     } catch {
-      return;
+      return; // no Codex config file: nothing in it to check
     }
   }
   let section = '';

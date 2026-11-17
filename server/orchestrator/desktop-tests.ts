@@ -148,6 +148,7 @@ export class DesktopTests {
     const owner = t.owner ?? '';
     const dir = p.agentDirs[owner] ?? p.repoDir;
     if (p.agentDirs[owner]) void this.host.ensureSetup(owner, dir, owner);
+    // A failed setup is already reported in the chat by the setup runner; the tests show what's missing.
     await Promise.all(this.host.pendingSetup([dir])).catch(() => {});
     if (this.run !== run || gen !== this.host.gen()) return;
     // The helper's run: check again right before the mouse moves (you may be back since the countdown began).

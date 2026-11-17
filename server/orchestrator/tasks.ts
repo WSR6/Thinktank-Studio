@@ -7,12 +7,13 @@ import { rename, unlink, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { decodeText, readTeamFiles, type ProjectInfo } from '../project.js';
 import { TASKS_PARSE_GRACE_MS, type Task } from './types.js';
+import { keepBrokenCopy } from './persistence.js';
 
 /** What the task store needs from the orchestrator. */
 export interface TaskStoreHost {
   project(): ProjectInfo | undefined;
   /** tasks.json has stayed unparseable past the grace period (told once per broken spell). */
-  broken(file: string, message: string): void;
+  broken(file: string, message: string, copy?: string): void;
 }
 
 export class TaskStore {
@@ -30,11 +31,24 @@ export class TaskStore {
 
   constructor(private host: TaskStoreHost) {}
 
+  /** Name of the copy kept of a tasks.json found damaged when the project opened. */
+  private brokenCopy?: string;
+
   /** A project was opened: forget the old one's list and warning state. */
   reset(): void {
     this.parseSince = 0;
     this.parseAnnounced = false;
+    this.brokenCopy = undefined;
     this.last = [];
+  }
+
+  /**
+   * tasks.json was already damaged when the project opened (no agent is mid-rewrite then): the first
+   * read announces it at once instead of after the grace period.
+   */
+  brokenAtOpen(copy: string): void {
+    this.parseSince = Date.now() - TASKS_PARSE_GRACE_MS;
+    this.brokenCopy = copy;
   }
 
   async read(): Promise<Task[]> {
@@ -55,6 +69,7 @@ export class TaskStore {
       const tasks = JSON.parse(raw).tasks;
       this.parseSince = 0;
       this.parseAnnounced = false;
+      this.brokenCopy = undefined;
       this.last = Array.isArray(tasks) ? tasks.filter((t: any) => t && typeof t.id === 'string') : [];
       return this.last;
     } catch (err) {
@@ -67,7 +82,9 @@ export class TaskStore {
         setTimeout(() => void this.read(), TASKS_PARSE_GRACE_MS + 500);
       } else if (!this.parseAnnounced && Date.now() - this.parseSince >= TASKS_PARSE_GRACE_MS) {
         this.parseAnnounced = true;
-        this.host.broken(file, msg);
+        // Keep the damaged version before anyone repairs it in place (already kept if it was damaged at open).
+        this.brokenCopy ??= keepBrokenCopy(file);
+        this.host.broken(file, msg, this.brokenCopy);
       }
       return this.last;
     }
@@ -97,7 +114,7 @@ export class TaskStore {
           const tmp = `${file}.${process.pid}.${++this.writeSeq}.tmp`;
           await writeFile(tmp, JSON.stringify(data, null, 2) + '\n');
           if (tries < 3 && !readFileSync(file).equals(raw)) {
-            await unlink(tmp).catch(() => {});
+            await unlink(tmp).catch(() => {}); // our own temp file; a leftover is harmless
             continue;
           }
           await rename(tmp, file);

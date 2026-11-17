@@ -87,20 +87,36 @@ export function requeueForRetry(r: Runtime, plan: TurnPlan): void {
 }
 
 /**
+ * Whether message number `i` may go into agent `id`'s prompt: it can see it, and it isn't a teammate's
+ * proposal hidden during a debate's first round. Shared by chatContext and the disk read for older context.
+ */
+export function contextVisible(o: { id: string; plan: TurnPlan; isAgent: (id: string) => boolean; canSee: (m: ChatMessage) => boolean }) {
+  const hidden = (m: ChatMessage, i: number) => o.plan.hideAgentsFrom !== undefined && i >= o.plan.hideAgentsFrom && o.isAgent(m.from) && m.from !== o.id;
+  return { hidden, visible: (m: ChatMessage, i: number) => o.canSee(m) && !hidden(m, i) };
+}
+
+/**
  * The chat messages a turn's prompt carries, who its reply goes to, and how far the agent will have
  * seen the chat once the turn succeeds.
  */
 export function chatContext(
   messages: ChatMessage[],
-  o: { id: string; lastSeen: number; plan: TurnPlan; owed?: Ask; fresh: boolean; isAgent: (id: string) => boolean; canSee: (m: ChatMessage) => boolean },
+  o: {
+    id: string;
+    base?: number;
+    /** Numbered messages from before `base` (read from disk), oldest first: for a context that reaches back past memory. */
+    earlier?: (readonly [ChatMessage, number])[];
+    lastSeen: number;
+    plan: TurnPlan; owed?: Ask; fresh: boolean; isAgent: (id: string) => boolean; canSee: (m: ChatMessage) => boolean },
 ): { context: (readonly [ChatMessage, number])[]; newAttachments: string[]; replyTo: string; seenUpTo: number } {
   const { id, lastSeen, plan, owed, fresh } = o;
-  const hidden = (m: ChatMessage, i: number) => plan.hideAgentsFrom !== undefined && i >= plan.hideAgentsFrom && o.isAgent(m.from) && m.from !== id;
-  const visible = (m: ChatMessage, i: number) => o.canSee(m) && !hidden(m, i);
+  const { hidden, visible } = contextVisible(o);
 
-  const indexed = messages.map((m, i) => [m, i] as const);
+  // Indexes are absolute message numbers in the whole chat log; `messages` starts at number `base`.
+  const base = o.base ?? 0;
+  const indexed = [...(o.earlier ?? []).filter(([, i]) => i < base), ...messages.map((m, i) => [m, base + i] as const)];
   // Messages posted while this prompt is being built (e.g. a notice from reading tasks.json) aren't in it.
-  const snapshotLength = messages.length;
+  const snapshotLength = base + messages.length;
   // A question's turn carries only the question: messages that arrived since its last turn are left
   // for its next one, so whatever they ask for gets a turn (and a reply to the room) of its own.
   const asked = Boolean(owed);
@@ -108,7 +124,7 @@ export function chatContext(
     ? indexed.filter(([m, i]) => visible(m, i) && (!asked || i < lastSeen)).slice(-HISTORY_WINDOW)
     : asked
       ? []
-      : indexed.slice(lastSeen).filter(([m, i]) => visible(m, i) && m.from !== id);
+      : indexed.filter(([m, i]) => i >= lastSeen && visible(m, i) && m.from !== id);
 
   // Attachments go along only with the message they were attached to, not with every later turn.
   const newAttachments = context.filter(([m, i]) => i >= lastSeen && m.attachments?.length).flatMap(([m]) => m.attachments!);

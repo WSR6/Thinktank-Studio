@@ -179,7 +179,7 @@ export async function runSetup(dir: string, cfg: SetupConfig, env: Record<string
       const timer = setTimeout(() => {
         note(`(stopped after ${SETUP_TIMEOUT_MS / 60_000} minutes)`);
         // The whole tree: on Windows the shell's children (npm, node) would otherwise keep running.
-        if (process.platform === 'win32' && child.pid) execFile('taskkill', ['/pid', String(child.pid), '/T', '/F'], () => {});
+        if (process.platform === 'win32' && child.pid) execFile('taskkill', ['/pid', String(child.pid), '/T', '/F'], () => {}); // fails only if the tree already exited
         else child.kill();
         setTimeout(() => finish(null), 5000); // even if a leftover child keeps the output open
       }, SETUP_TIMEOUT_MS);

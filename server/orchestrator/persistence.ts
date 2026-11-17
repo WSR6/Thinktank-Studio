@@ -2,15 +2,35 @@
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { rename, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
-import { listProjects, projectsRoot } from '../project.js';
+import { decodeText, listProjects, projectsRoot } from '../project.js';
+import { copyAside, mayWrite } from '../safe-json.js';
 import type { ChatMessage } from '../types.js';
 
-/** A JSON file's content, or {} when it's missing or doesn't parse. */
+/**
+ * A JSON file's content, or {} when it's missing or doesn't parse. Only for caches that are safe to
+ * rebuild (setup-state.json: a lost entry just runs a worktree's setup again); state the user would
+ * miss goes through loadJsonFile (safe-json.ts), which keeps a damaged file and says so.
+ */
 export function readJson(path: string): any {
   try {
     return existsSync(path) ? JSON.parse(readFileSync(path, 'utf8')) : {};
   } catch {
-    return {};
+    return {}; // a cache: rebuilt as needed (see above)
+  }
+}
+
+/**
+ * If `path` exists and doesn't parse as JSON, copy it to <path>.corrupt-<time> (the original stays
+ * for whoever repairs it). Returns the copy's file name, or undefined when the file is fine or missing.
+ */
+export function keepBrokenCopy(path: string): string | undefined {
+  try {
+    if (!existsSync(path)) return undefined;
+    JSON.parse(decodeText(readFileSync(path)));
+    return undefined;
+  } catch (e) {
+    if ((e as NodeJS.ErrnoException).code) return undefined; // can't read it (locked): not damaged
+    return copyAside(path); // a new unique copy, or the existing one with the same bytes
   }
 }
 
@@ -24,13 +44,14 @@ export function readJsonl(path: string): ChatMessage[] {
       try {
         return [JSON.parse(l) as ChatMessage];
       } catch {
-        return [];
+        return []; // a torn last line (the app stopped mid-write): the rest still loads
       }
     });
 }
 
 /** Write via a temp file and rename, so a reader never sees a torn file. */
 export async function writeAtomic(file: string, text: string): Promise<void> {
+  if (!mayWrite(file)) return; // damaged or unreadable, and no copy could be kept: leave it for the user
   await writeFile(file + '.tmp', text);
   await rename(file + '.tmp', file);
 }
@@ -41,7 +62,11 @@ export async function writeAtomic(file: string, text: string): Promise<void> {
  * read is left alone and its fingerprint check catches it on open.
  */
 export async function forgetSessionsElsewhere(currentProject: string | undefined, changed: { id: string; adapterChanged: boolean }[]): Promise<void> {
-  for (const name of await listProjects().catch(() => [] as string[])) {
+  const names = await listProjects().catch((e) => {
+    console.error(`Couldn't list projects to update their sessions: ${(e as Error).message}`);
+    return [] as string[];
+  });
+  for (const name of names) {
     if (name === currentProject) continue;
     const file = join(projectsRoot(), name, 'team', 'session.json');
     try {

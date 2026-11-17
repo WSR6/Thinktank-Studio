@@ -1,6 +1,7 @@
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { mkdirSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
+import { loadJsonFile, mayWrite } from './safe-json.js';
 
 /**
  * Optional roles for agents (off by default). When on, each agent's turn says what its job is,
@@ -78,19 +79,19 @@ const SEED: Preset[] = [
   },
 ];
 
-export function loadPresets(): Preset[] {
-  try {
-    if (existsSync(PRESETS_FILE)) {
-      const data = JSON.parse(readFileSync(PRESETS_FILE, 'utf8'));
-      if (Array.isArray(data)) return data.filter((p) => p && typeof p.name === 'string' && p.roles);
-    }
-  } catch {
-    /* fall through to the seed */
-  }
-  return SEED;
+/** Saved setups; the built-in ones when there's no file. A damaged file is moved aside (onProblem tells the user). */
+export function loadPresets(onProblem: (text: string) => void = () => {}): Preset[] {
+  const { value, problem } = loadJsonFile<Preset[] | undefined>(PRESETS_FILE, undefined, {
+    label: 'Your saved setups file (.thinktank/role-presets.json in your home folder)',
+    what: 'the built-in setups are shown instead',
+    valid: Array.isArray,
+  });
+  if (problem) onProblem(problem);
+  return value ? value.filter((p) => p && typeof p.name === 'string' && p.roles) : SEED;
 }
 
 export function savePresets(presets: Preset[]): void {
+  if (!mayWrite(PRESETS_FILE)) throw new Error("Your saved setups file couldn't be read or kept aside, so it isn't saved over. Fix or delete .thinktank/role-presets.json in your home folder, then restart the app.");
   mkdirSync(join(homedir(), '.thinktank'), { recursive: true });
   writeFileSync(PRESETS_FILE, JSON.stringify(presets, null, 2));
 }

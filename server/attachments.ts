@@ -60,7 +60,7 @@ function looksLikeText(data: Buffer): boolean {
     new TextDecoder('utf-8', { fatal: true }).decode(data);
     return true;
   } catch {
-    return false;
+    return false; // not valid UTF-8: treated as binary
   }
 }
 

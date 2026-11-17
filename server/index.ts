@@ -12,6 +12,8 @@ import { Orchestrator } from './orchestrator.js';
 import { captureConsole } from './logbuffer.js';
 import { projectView, refreshIdle, runAction } from './operator.js';
 import { listProjects, projectsRoot } from './project.js';
+import { MAX_PLAN_TEXT, validateCommand } from './commands.js';
+import { errText, logOnce } from './report.js';
 import type { Phase } from './types.js';
 
 const PORT = Number(process.env.PORT ?? 4317);
@@ -20,7 +22,9 @@ const HOST = process.env.HOST ?? '127.0.0.1';
 const mock = process.argv.includes('--mock');
 
 captureConsole(); // so the App helper can read recent server output
-const orch = new Orchestrator(loadAgentConfigs(), mock);
+const configProblems: string[] = [];
+const orch = new Orchestrator(loadAgentConfigs((t) => configProblems.push(t)), mock);
+for (const t of configProblems) orch.warn(t);
 // TTS_REAL_HELPER=1 runs the real helper CLI next to mock agents (to test the helper on its own).
 const helper = new AppHelper(loadHelperConfig(), mock && process.env.TTS_REAL_HELPER !== '1', {
   recentIssues: () => orch.recentIssues(),
@@ -36,7 +40,7 @@ orch.on('state', () => helper.poke());
 // Desktop tests waiting and Run my project on: watch for this computer going idle, then let the helper run them.
 setInterval(() => {
   if (!helper.operating || !orch.desktopTestsWaiting().length) return;
-  refreshIdle().then((fresh) => fresh && helper.poke(), () => {});
+  refreshIdle().then((fresh) => fresh && helper.poke(), (e) => logOnce('idle check', e));
 }, 60_000).unref();
 const app = express();
 app.use(express.static(fileURLToPath(new URL('../web', import.meta.url))));
@@ -49,7 +53,7 @@ function sameOrigin(origin: string | undefined): boolean {
     const u = new URL(origin);
     return ['localhost', '127.0.0.1', '[::1]'].includes(u.hostname) && Number(u.port) === PORT;
   } catch {
-    return false;
+    return false; // not a URL: not our page
   }
 }
 
@@ -87,6 +91,8 @@ const server = createServer(app);
 const wss = new WebSocketServer({
   server,
   path: '/ws',
+  // Big enough for the largest command (a saved plan; JSON escapes a control character as 6 bytes); ws's default is 100 MB.
+  maxPayload: MAX_PLAN_TEXT * 6 + 64 * 1024,
   // Only this app's own page may connect: blocks other sites, and other local dev servers on other ports.
   verifyClient: ({ origin }: { origin?: string }) => sameOrigin(origin),
 });
@@ -104,7 +110,7 @@ helper.on('restarting', () => broadcast({ type: 'restarting' }));
 orch.on('agent_event', (e) => broadcast({ type: 'agent_event', ...e }));
 orch.on('state', () => broadcast({ type: 'state', state: orch.state() }));
 orch.on('messages', () => {
-  broadcast({ type: 'messages', messages: orch.messages });
+  broadcast({ type: 'messages', ...orch.chatPage() });
   broadcast({ type: 'agent_history', history: orch.activityHistory() });
 });
 orch.on('team', async () => broadcast({ type: 'team', ...(await orch.teamFiles()) }));
@@ -117,6 +123,8 @@ orch.on('branches', async () => {
 });
 
 wss.on('connection', (ws: WebSocket) => {
+  // A broken or oversized frame closes only this connection (the page reconnects); unhandled, it would end the server.
+  ws.on('error', (e) => console.warn(`page connection closed: ${errText(e)}`));
   const send = (m: unknown) => {
     if (ws.readyState === ws.OPEN) ws.send(JSON.stringify(m));
   };
@@ -124,24 +132,31 @@ wss.on('connection', (ws: WebSocket) => {
   // while the slower parts (helper git status, branch status) are still loading.
   void (async () => {
     send({ type: 'state', state: orch.state() });
-    send({ type: 'messages', messages: orch.messages });
+    send({ type: 'messages', ...orch.chatPage() });
     send({ type: 'agent_history', history: orch.activityHistory() });
+    for (const error of orch.waitingWarnings()) send({ type: 'error', error });
     send({ type: 'helper_state', helper: await helper.snapshot() });
     send({ type: 'projects', projects: await listProjects() });
     send({ type: 'agent_config', agents: orch.agentConfigs(), adapters: ADAPTERS.filter((a) => a !== 'mock' || mock) });
     if (orch.project) {
       send({ type: 'team', ...(await orch.teamFiles()) });
-      send({ type: 'branches', branches: await orch.branches().catch(() => []) });
+      send({
+        type: 'branches',
+        branches: await orch.branches().catch((e) => {
+          console.error('branch status failed:', errText(e)); // the Branches tab stays empty until the next refresh
+          return [];
+        }),
+      });
     }
   })().catch((e) => console.error('initial sync failed:', e.message));
 
   ws.on('message', async (raw) => {
-    let cmd: any;
-    try {
-      cmd = JSON.parse(String(raw));
-    } catch {
-      return;
+    const checked = validateCommand(String(raw));
+    if (!checked.ok) {
+      console.warn(`refused a command from the page: ${checked.error}`);
+      return send({ type: 'error', error: checked.error });
     }
+    const cmd = checked.cmd;
     try {
       switch (cmd.type) {
         case 'create_project':
@@ -180,6 +195,7 @@ wss.on('connection', (ws: WebSocket) => {
           orch.setDesktopTestCommand(String(cmd.command ?? ''));
           break;
         case 'desktop_tests':
+          if (cmd.action !== 'cancel' && !cmd.taskId) throw new Error('Which task? The request to run or skip desktop tests named none.');
           if (cmd.action === 'run') orch.runDesktopTests(String(cmd.taskId), 'user');
           else if (cmd.action === 'skip') orch.skipDesktopTests(String(cmd.taskId));
           else if (cmd.action === 'cancel') orch.cancelDesktopTests();
@@ -193,6 +209,9 @@ wss.on('connection', (ws: WebSocket) => {
         case 'delete_preset':
           orch.deletePreset(String(cmd.name));
           break;
+        case 'load_earlier':
+          send({ type: 'earlier_messages', before: String(cmd.before), ...(await orch.earlierMessages(String(cmd.before))) });
+          break;
         case 'refresh_branches':
           orch.emit('branches');
           break;
@@ -200,7 +219,6 @@ wss.on('connection', (ws: WebSocket) => {
           orch.addComment(String(cmd.agentId), String(cmd.file ?? ''), Number(cmd.line), cmd.side === 'old' ? 'old' : 'new', String(cmd.lineText ?? ''), String(cmd.text ?? ''));
           break;
         case 'comment_action':
-          if (!['delete', 'resolve', 'reopen'].includes(cmd.action)) throw new Error('Unknown comment action');
           orch.commentAction(String(cmd.id), cmd.action);
           break;
         case 'send_comments':
@@ -225,7 +243,6 @@ wss.on('connection', (ws: WebSocket) => {
           orch.dismissLimit();
           break;
         case 'review_action':
-          if (!['approve', 'send_back', 'restart', 'reassign', 'set_owner'].includes(cmd.action)) throw new Error('Unknown review action');
           await orch.reviewAction(String(cmd.taskId), cmd.action, String(cmd.note ?? ''));
           break;
         case 'set_gates':
@@ -325,7 +342,9 @@ function lastProjects(): Record<string, string> {
     const saved = JSON.parse(readFileSync(LAST_PROJECT, 'utf8'));
     if (typeof saved?.root === 'string' && typeof saved?.name === 'string') return { [saved.root]: saved.name }; // first version's format
     return saved && typeof saved === 'object' && !Array.isArray(saved) ? saved : {};
-  } catch {
+  } catch (e) {
+    // None saved yet is normal; anything else only means no project reopens by itself.
+    if ((e as NodeJS.ErrnoException).code !== 'ENOENT') console.warn(`Couldn't read ${LAST_PROJECT}: ${errText(e)}`);
     return {};
   }
 }
@@ -334,8 +353,8 @@ function rememberProject(name: string): void {
   try {
     mkdirSync(dirname(LAST_PROJECT), { recursive: true });
     writeFileSync(LAST_PROJECT, JSON.stringify({ ...lastProjects(), [projectsRoot()]: name }, null, 2));
-  } catch {
-    /* only a convenience */
+  } catch (e) {
+    console.warn(`Couldn't remember the open project in ${LAST_PROJECT}: ${errText(e)}`); // only a convenience
   }
 }
 
@@ -346,7 +365,7 @@ async function reopenLastProject(): Promise<void> {
     await orch.open(name, false);
     broadcast({ type: 'projects', projects: await listProjects() });
     console.log(`Reopened project "${name}"`);
-  } catch {
-    /* none saved yet, or it's gone */
+  } catch (e) {
+    orch.warn(`The project you had open last couldn't be reopened: ${errText(e)}. Open it from the project list to try again.`);
   }
 }

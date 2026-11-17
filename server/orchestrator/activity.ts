@@ -7,6 +7,7 @@ import { appendFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import type { AgentEvent, AgentStatus } from '../types.js';
 import { readJsonl } from './persistence.js';
+import { logOnce } from '../report.js';
 import { ACTIVITY_KEEP, type ActivityLine } from './types.js';
 
 export class ActivityLog {
@@ -31,7 +32,8 @@ export class ActivityLog {
     this.lines.set(agentId, buf);
     this.totals.set(agentId, (this.totals.get(agentId) ?? 0) + 1);
     if (teamDir) {
-      appendFile(join(teamDir, 'activity', `${agentId}.jsonl`), JSON.stringify(line) + '\n').catch(() => {});
+      // Kept in memory either way; the file only brings the panels back after a restart.
+      appendFile(join(teamDir, 'activity', `${agentId}.jsonl`), JSON.stringify(line) + '\n').catch((e) => logOnce(`activity log ${agentId}`, e));
     }
   }
 

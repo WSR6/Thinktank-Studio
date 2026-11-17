@@ -100,15 +100,19 @@ import {
   type Task,
   type TurnPlan,
   type TurnWatch,
+  HISTORY_WINDOW,
 } from './orchestrator/types.js';
 import { ActivityLog } from './orchestrator/activity.js';
 import { WorktreeSetup } from './orchestrator/setup-runner.js';
 import { AskBoard } from './orchestrator/asks.js';
 import { DesktopTests } from './orchestrator/desktop-tests.js';
 import { ReviewFlow } from './orchestrator/review-flow.js';
-import { chatContext, isAway, queuePlan, requeueForRetry, routeReply, takePlan, type TurnCtx, type TurnStart } from './orchestrator/turns.js';
+import { chatContext, contextVisible, isAway, queuePlan, requeueForRetry, routeReply, takePlan, type TurnCtx, type TurnStart } from './orchestrator/turns.js';
 import { depsOf, handoffsFor, handoffText, isReady, TaskStore } from './orchestrator/tasks.js';
-import { forgetSessionsElsewhere, readJson, readJsonl, writeAtomic } from './orchestrator/persistence.js';
+import { forgetSessionsElsewhere, keepBrokenCopy, writeAtomic } from './orchestrator/persistence.js';
+import { isRecord, loadJsonFile } from './safe-json.js';
+import { Reporter } from './report.js';
+import { ChatLog, lineLanded, readMessageRange, readMessagesBefore, type ChatPage } from './orchestrator/chatlog.js';
 import { checkStall, newWatch, noteProgress, snooze, WATCH_TICK_MS } from './orchestrator/stall.js';
 import {
   activityOf,
@@ -133,7 +137,7 @@ import {
 export type { PendingRequest, StallInfo } from './orchestrator/types.js';
 
 /** State files restored from team/backups when they won't parse. */
-const STATE_FILES = ['session.json', 'reviews.json'];
+const STATE_FILES = ['session.json', 'reviews.json', 'comments.json'];
 const PHASES: Phase[] = ['plan', 'build', 'review'];
 const AUTONOMY: Autonomy[] = ['read', 'edits', 'auto', 'full'];
 /** Model/effort ids go on the command line: safe characters, and no leading '-' so they can't become flags. */
@@ -142,7 +146,16 @@ const SAFE_ID = /^(?:[A-Za-z0-9][A-Za-z0-9._:-]{0,63})?$/;
 const SAFE_MODEL = /^(?:[A-Za-z0-9][A-Za-z0-9._:/[\]-]{0,127})?$/;
 
 export class Orchestrator extends EventEmitter {
-  messages: ChatMessage[] = [];
+  /** Warnings from before a project was open (e.g. a damaged agents.config.json), posted when one opens. */
+  private pendingWarnings: string[] = [];
+  /** The team chat: the newest messages in memory, all of them in team/chat.jsonl. */
+  private chat = new ChatLog();
+  /** Errors worth telling you about (a failed save, a review step that threw): logged, and noted in the chat. */
+  private reporter = new Reporter((text) => this.notice(text));
+  /** The newest chat messages (older ones are on disk only; see ChatLog). */
+  get messages(): ChatMessage[] {
+    return this.chat.messages;
+  }
   leader: 'user' | string = 'user';
   phase: Phase = 'plan';
   /** Approval gates: leader requests for phase changes / merges wait for the user. */
@@ -157,9 +170,10 @@ export class Orchestrator extends EventEmitter {
   /** team/tasks.json reads and the app's edits to it (see tasks.ts). */
   private tasks = new TaskStore({
     project: () => this.project,
-    broken: (file, msg) =>
+    broken: (file, msg, copy) =>
       this.system(
-        `${file} isn't valid JSON (${msg}). The app keeps using the last valid task list until it's fixed. ` +
+        `${file} isn't valid JSON (${msg}). The app keeps using the last valid task list until it's fixed` +
+          `${copy ? ` (a copy of the damaged file is kept as team/${copy})` : ''}. ` +
           `${this.nameOf(this.leader)}, please repair it with your file-edit tool (plain UTF-8, not PowerShell Set-Content or >).`,
       ),
   });
@@ -183,10 +197,7 @@ export class Orchestrator extends EventEmitter {
     pendingSetup: (dirs) => this.pendingSetup(dirs),
     system: (text) => this.system(text),
     changed: () => this.emit('state'),
-    queueReview: (fn) => {
-      this.reviewQueue = this.reviewQueue.then(fn).catch(console.error);
-      return this.reviewQueue;
-    },
+    queueReview: (fn) => this.review.queue(fn),
     applyVerdict: (taskId, by, stage, verdict, notes) => this.applyVerdict(taskId, by, stage, verdict, notes),
   });
   /** The review pipeline (see review-flow.ts); `reviews` and the review queue live there. */
@@ -252,6 +263,11 @@ export class Orchestrator extends EventEmitter {
   private gen = 0;
   private debateCancelled = false;
   private metaWrite: Promise<void> = Promise.resolve();
+  /** Chat lines are appended one at a time, so the file's order is the chat's order (message numbers rely on it). */
+  private chatWrite: Promise<void> = Promise.resolve();
+  /** Chat lines not on disk yet, oldest first (see flushChat). */
+  private chatPending: { file: string; line: string; retry?: boolean }[] = [];
+  private chatRetry?: NodeJS.Timeout;
 
   constructor(configs: AgentConfig[], private mock: boolean) {
     super();
@@ -290,7 +306,7 @@ export class Orchestrator extends EventEmitter {
       },
       reviews: this.reviews,
       comments: this.comments,
-      presets: loadPresets(),
+      presets: loadPresets((t) => this.warn(t)),
       limitHit: this.limitHit ?? null,
       resume: this.resumeOffer ? { ...this.resumeOffer, names: this.resumeOffer.working.map((id) => this.nameOf(id)) } : null,
       needsYou: this.needsYou,
@@ -325,15 +341,38 @@ export class Orchestrator extends EventEmitter {
     this.gen++;
     this.stopAll();
     await Promise.allSettled([...this.agents.values()].map((r) => r.chain));
-    await this.reviewQueue.catch(() => {});
+    await this.reviewQueue; // never rejects: each step's failure is reported by ReviewFlow.queue
     await this.metaWrite;
+    await this.chatWrite;
+    // Only the newest messages are loaded; the whole log stays in team/chat.jsonl.
+    const chat = new ChatLog();
+    const chatFile = join(next.teamDir, 'chat.jsonl');
+    await chat.load(chatFile);
+    // Lines for this project still waiting to be saved (a failed append being retried) come after
+    // what's on disk, in the same order the retry will write them.
+    // One already on disk (a write that failed after landing) is just dropped from the queue.
+    const loaded = new Set(chat.messages.map((m) => m.id));
+    for (const p of [...this.chatPending]) {
+      if (p.file !== chatFile) continue;
+      const m = JSON.parse(p.line) as ChatMessage;
+      if (loaded.has(m.id)) this.chatPending.splice(this.chatPending.indexOf(p), 1);
+      else chat.push(m);
+    }
     this.project = next;
+    this.chat = chat;
     this.tasks.reset();
-    this.messages = readJsonl(join(this.project.teamDir, 'chat.jsonl'));
     // A state file that won't parse comes back from its newest good backup; then back up the good ones.
     const restored = STATE_FILES.map((f) => [f, restoreIfBroken(this.project!.teamDir, f)] as const).filter(([, b]) => b);
     backupTeamFiles(this.project.teamDir, [...STATE_FILES, 'tasks.json']);
-    const meta = readJson(join(this.project.teamDir, 'session.json'));
+    // Damaged state files with no good backup: moved aside, started clean, and you're told below.
+    const problems: string[] = [];
+    const session = loadJsonFile<any>(join(this.project.teamDir, 'session.json'), {}, {
+      label: 'team/session.json',
+      what: "this project's settings (leader, phase, agents' conversations and models) start from defaults",
+      valid: isRecord,
+    });
+    if (session.problem) problems.push(session.problem);
+    const meta = session.value;
     this.leader = meta.leader ?? 'user';
     this.phase = meta.phase ?? 'plan';
     this.gates = meta.gates ?? true;
@@ -343,10 +382,10 @@ export class Orchestrator extends EventEmitter {
     this.testCommand = typeof meta.testCommand === 'string' ? meta.testCommand : '';
     this.desktopTestCommand = typeof meta.desktopTestCommand === 'string' ? meta.desktopTestCommand : '';
     this.desktop.reset();
-    this.reviews = loadReviews(this.project.teamDir);
+    this.reviews = loadReviews(this.project.teamDir, (t) => problems.push(t));
     // A review request that was still being prepared when the app stopped: ask again.
     for (const e of Object.values(this.reviews)) if (e.status === 'in_review' && e.askedAt === NOT_ASKED_YET) e.waitingOn = undefined;
-    this.comments = loadComments(this.project.teamDir);
+    this.comments = loadComments(this.project.teamDir, (t) => problems.push(t));
     this.attempts = meta.attempts && typeof meta.attempts === 'object' ? meta.attempts : {};
     this.sentBack = meta.sentBack && typeof meta.sentBack === 'object' ? meta.sentBack : {};
     this.doneOk = meta.doneOk && typeof meta.doneOk === 'object' ? meta.doneOk : {};
@@ -378,7 +417,7 @@ export class Orchestrator extends EventEmitter {
         if (s.program.split('|')[0] !== r.cfg.adapter || (s.program.split('|')[3] ?? '') !== (r.cfg.server ?? '')) s.settings = undefined;
       }
       r.sessionId = s.sessionId;
-      r.lastSeen = Math.min(s.lastSeen ?? 0, this.messages.length);
+      r.lastSeen = Math.min(s.lastSeen ?? 0, this.chat.total);
       // An empty saved model/effort means "default", which is the agents.config.json value when set.
       const saved = s.settings ?? {};
       const model = saved.model || r.cfg.model || '';
@@ -400,6 +439,9 @@ export class Orchestrator extends EventEmitter {
     });
     this.loadActivity();
     this.watchTeam();
+    // tasks.json is the agents' file: if it's damaged, keep a copy and ask the leader to repair it right away.
+    const tasksCopy = keepBrokenCopy(join(this.project.teamDir, 'tasks.json'));
+    if (tasksCopy) this.tasks.brokenAtOpen(tasksCopy);
     // Remember current overlaps and accepted tasks without re-announcing them.
     const tasksNow = await this.readTasks();
     // A project from before done checks: its finished tasks stay finished.
@@ -409,6 +451,7 @@ export class Orchestrator extends EventEmitter {
     this.knownTasks = new Set(tasksNow.map((t) => t.id));
     if (create) this.system(`Project "${name}" created at ${this.project.root}. Phase: plan.`);
     for (const [file, backup] of restored) this.system(`team/${file} couldn't be read, so it was restored from team/${backup}. The broken copy is kept next to it.`);
+    for (const p of [...this.pendingWarnings.splice(0), ...problems]) this.notice(`⚠ ${p}`);
     if (this.requests.length || this.needsYou.length) {
       const what = [
         this.requests.length ? `${this.requests.length} request${this.requests.length > 1 ? 's' : ''} for your approval` : '',
@@ -440,7 +483,7 @@ export class Orchestrator extends EventEmitter {
       this.comeBack(r);
     }
     // Reviews that waited (e.g. for an away reviewer) get another chance now.
-    this.reviewQueue = this.reviewQueue.then(() => this.dispatchParked()).catch(console.error);
+    void this.review.queue(() => this.dispatchParked());
     for (const [id, dir] of Object.entries(this.project.agentDirs)) void this.ensureSetup(id, dir, id);
     this.emit('messages');
     this.emit('state');
@@ -494,10 +537,18 @@ export class Orchestrator extends EventEmitter {
    * After a BUILD turn: flag files the agent changed that belong to another agent's task, or that
    * none of its own tasks claim. Tells the user, and the agent (it sees the note next turn).
    */
+  /** Files an agent's branch changed, or none when git can't tell (logged): the ownership check then skips it. */
+  private changedOrNone(project: ProjectInfo, agentId: string): ReturnType<typeof changedFiles> {
+    return changedFiles(project, agentId).catch((e) => {
+      this.reporter.report('changed files', e);
+      return [];
+    });
+  }
+
   private async checkScopeAfterTurn(r: Runtime): Promise<void> {
     if (this.phase !== 'build' || !this.project) return;
     const tasks = await this.readTasks();
-    const report = checkScope(r.cfg.id, await changedFiles(this.project, r.cfg.id).catch(() => []), tasks);
+    const report = checkScope(r.cfg.id, await this.changedOrNone(this.project, r.cfg.id), tasks);
     const foreign = report.foreign.filter((f) => !r.scopeWarned.has(f.file));
     const outside = report.outside.filter((f) => !r.scopeWarned.has(f));
     if (!foreign.length && !outside.length) return;
@@ -538,7 +589,7 @@ export class Orchestrator extends EventEmitter {
     const [statuses, tasks] = await Promise.all([branchStatus(project), this.readTasks()]);
     return Promise.all(
       statuses.map(async (s) => {
-        const scope = checkScope(s.agentId, await changedFiles(project, s.agentId).catch(() => []), tasks);
+        const scope = checkScope(s.agentId, await this.changedOrNone(project, s.agentId), tasks);
         return { ...s, foreign: scope.foreign, outside: scope.outside };
       }),
     );
@@ -930,7 +981,7 @@ export class Orchestrator extends EventEmitter {
     const mine = tasks.filter((t) => t.owner === r.cfg.id);
     const next = mine.find((t) => OPEN(t) && this.isReady(t, tasks));
     const waiting = mine.filter((t) => OPEN(t) && !this.isReady(t, tasks));
-    const after = await workSnapshot(this.project, r.cfg.id).catch(() => undefined);
+    const after = await workSnapshot(this.project, r.cfg.id).catch((e) => void this.reporter.report('work snapshot', e)); // no snapshot: not counted as an idle turn
     const statusKey = JSON.stringify(mine.map((t) => [t.id, t.status]));
     loop.idle = before !== undefined && after !== undefined && before === after + statusKey ? loop.idle + 1 : 0;
 
@@ -985,7 +1036,8 @@ export class Orchestrator extends EventEmitter {
     try {
       const mine = (await this.readTasks()).filter((t) => t.owner === r.cfg.id);
       return (await workSnapshot(this.project, r.cfg.id)) + JSON.stringify(mine.map((t) => [t.id, t.status]));
-    } catch {
+    } catch (e) {
+      this.reporter.report('work snapshot', e); // no snapshot: this turn isn't counted as idle
       return undefined;
     }
   }
@@ -1065,9 +1117,59 @@ export class Orchestrator extends EventEmitter {
     return [...this.agents.values()].some((r) => r.current || r.pending);
   }
 
+  /** The newest chat messages for the page, and whether there are older ones to load. */
+  chatPage(): ChatPage {
+    return this.chat.page();
+  }
+
+  /** The chat messages before `beforeId` (from team/chat.jsonl, which has the whole history). */
+  async earlierMessages(beforeId: string): Promise<ChatPage> {
+    if (!this.project) return { messages: [], earlier: false };
+    const r = await readMessagesBefore(join(this.project.teamDir, 'chat.jsonl'), beforeId);
+    if (!r.found) throw new Error("Couldn't find where to continue in the chat history. Reload the page to start from the newest messages.");
+    return { messages: r.messages, earlier: r.earlier };
+  }
+
+  /**
+   * The part of a turn's chat context that's older than what memory holds, read from team/chat.jsonl,
+   * so trimming memory never changes what an agent sees: a resumed agent gets every message since its
+   * last turn, a fresh one its last HISTORY_WINDOW visible messages. Empty in the usual case.
+   */
+  private async earlierContext(
+    snapshot: { messages: ChatMessage[]; base: number },
+    lastSeen: number,
+    fresh: boolean,
+    asked: boolean,
+    { visible, hidden }: ReturnType<typeof contextVisible>,
+  ): Promise<(readonly [ChatMessage, number])[]> {
+    const { messages, base } = snapshot;
+    if (!base || !this.project) return [];
+    const file = join(this.project.teamDir, 'chat.jsonl');
+    // Hidden debate proposals the agent hasn't seen go along (chatContext keeps them out of the prompt
+    // but needs them to hold its seen-cursor before the first one).
+    const hiddenUnseen = (m: ChatMessage, i: number) => i >= lastSeen && hidden(m, i);
+    try {
+      // The file must hold every message before memory, in order: let pending appends land first.
+      await this.chatWrite;
+      if (fresh) {
+        // Only when memory doesn't already hold a full window of messages this agent may see.
+        const limit = asked ? lastSeen : Infinity;
+        if (messages.filter((m, i) => base + i < limit && visible(m, base + i)).length >= HISTORY_WINDOW) return [];
+        return await readMessageRange(file, 0, Math.min(base, limit), visible, HISTORY_WINDOW, hiddenUnseen);
+      }
+      if (asked || lastSeen >= base) return [];
+      return await readMessageRange(file, lastSeen, base, (m, i) => visible(m, i) || hidden(m, i));
+    } catch (e) {
+      this.reporter.report('earlier chat', e); // the turn still runs with what memory holds
+      return [];
+    }
+  }
+
   /** Recent problems shown to the user (failures, timeouts, warnings), for the App helper. */
-  recentIssues(): string[] {
-    return this.messages.filter((m) => m.from === 'system' && m.to === 'user').map((m) => m.text);
+  recentIssues(): { at: number; text: string }[] {
+    // `at`: the absolute message number, so a reader's cursor survives older messages leaving memory.
+    const base = this.chat.base;
+    return this.messages.flatMap((m, i) => (m.from === 'system' && m.to === 'user' ? [{ at: base + i, text: m.text }] : []));
   }
 
   stopAll(): void {
@@ -1210,7 +1312,7 @@ export class Orchestrator extends EventEmitter {
         e.waitingOn = undefined;
         reset = true;
       }
-    if (reset && this.project) void saveReviews(this.project.teamDir, this.reviews);
+    if (reset) this.saveReviewState();
     // Dismissed: those agents stay paused (autopilot doesn't pick them up again on its own).
     if (offer && action === 'dismiss') {
       for (const id of new Set([...offer.working, ...offer.looping])) {
@@ -1228,7 +1330,7 @@ export class Orchestrator extends EventEmitter {
       void this.enqueue(id, { instruction: was ? `${RESUME_NOTE}\n\nThe instruction for that cut-off turn was:\n\n${was}` : RESUME_NOTE });
     }
     if (offer.looping.length && this.autopilot && this.phase === 'build') void this.startLoops(offer.looping, offer.working);
-    this.reviewQueue = this.reviewQueue.then(() => this.dispatchParked()).catch(console.error);
+    void this.review.queue(() => this.dispatchParked());
   }
 
   private roleOf(id: string): RoleAssignment {
@@ -1297,7 +1399,7 @@ export class Orchestrator extends EventEmitter {
     }
     if (!changed) return;
     this.saveReviewState();
-    this.reviewQueue = this.reviewQueue.then(() => this.dispatchParked()).catch(console.error);
+    void this.review.queue(() => this.dispatchParked());
   }
 
   private newRuntime(cfg: AgentConfig): Runtime {
@@ -1478,8 +1580,7 @@ export class Orchestrator extends EventEmitter {
     if (!this.project || !this.available(r.cfg.id)) return;
     const gen = this.gen;
     // Reviews waiting for it first (each gets a turn of its own), then its own work.
-    this.reviewQueue = this.reviewQueue
-      .then(async () => {
+    void this.review.queue(async () => {
         await this.dispatchParked();
         if (gen !== this.gen || !this.available(r.cfg.id)) return;
         const building = this.phase === 'build' && this.autopilot;
@@ -1498,8 +1599,7 @@ export class Orchestrator extends EventEmitter {
         // Busy (e.g. with a review just handed to it): autopilot picks its tasks up after that turn.
         if (r.status === 'working' || r.pending) return;
         void this.enqueue(r.cfg.id, { instruction: this.continueInstruction(next, tasks) });
-      })
-      .catch(console.error);
+    });
   }
 
   /** The review pipeline's view of the orchestrator: live getters, so it always sees the current state. */
@@ -1539,6 +1639,7 @@ export class Orchestrator extends EventEmitter {
       nameOf: (id) => o.nameOf(id),
       system: (text) => o.system(text),
       notice: (text) => o.notice(text),
+      report: (key, e, text) => void o.reporter.report(key, e, text),
       emitAgent: (agentId, event) => o.emitAgent(agentId, event),
       emit: (event) => void o.emit(event),
       saveMeta: () => o.saveMeta(),
@@ -1607,7 +1708,7 @@ export class Orchestrator extends EventEmitter {
   // ── Line comments on branch diffs ─────────────────────────────────────
 
   private saveCommentState(): void {
-    if (this.project) void saveComments(this.project.teamDir, this.comments);
+    if (this.project) void saveComments(this.project.teamDir, this.comments, this.reporter.catcher('save comments', "Couldn't save line comments to team/comments.json; they're kept in memory, but would be lost if the app closed now"));
     this.emit('state');
   }
 
@@ -1787,7 +1888,10 @@ export class Orchestrator extends EventEmitter {
                 if (!(await this.autoMerge(agentId))) this.system(`${this.nameOf(agentId)}'s reviewed work goes into main once the rest of its branch is accepted.`);
               }
             : undefined,
-        ).catch(() => false);
+        ).catch((e) => {
+          this.reporter.report('arbiter', e);
+          return false; // handled below as a conflict nobody resolved
+        });
         if (!handled) {
           this.notice(
             `${this.nameOf(agentId)}'s work couldn't be merged into main: it conflicts with merged work in ${err.files.join(', ')}. ` +
@@ -1843,7 +1947,11 @@ export class Orchestrator extends EventEmitter {
       void this.ensureSetup(agentId, p.agentDirs[agentId], agentId); // new dependencies from main
     } catch (err) {
       if (err instanceof MergeConflictError) {
-        if (await this.arbitrate(agentId, err.files, 'It now builds on everyone\'s merged work.').catch(() => false)) return;
+        const arbitrated = await this.arbitrate(agentId, err.files, 'It now builds on everyone\'s merged work.').catch((e) => {
+          this.reporter.report('arbiter', e);
+          return false; // reported below as a conflict
+        });
+        if (arbitrated) return;
         this.add({
           from: 'system',
           to: agentId,
@@ -2025,7 +2133,7 @@ export class Orchestrator extends EventEmitter {
       // Files go to every agent in round 1 (attached to this message), and aren't re-sent in later rounds.
       const files = validAttachments(this.attachmentsDir(), attachments);
       this.add({ from: 'user', to: 'all', text: `🗳 Debate: ${text}`, ...(files.length ? { attachments: files } : {}) });
-      const start = this.messages.length;
+      const start = this.chat.total;
       this.system('Debate round 1: independent proposals.');
       await Promise.all(
         ids.map((id) =>
@@ -2292,14 +2400,22 @@ export class Orchestrator extends EventEmitter {
     const { r, id, plan, owed } = s;
     const project = this.project!;
     const fresh = !r.sessionId || !r.adapter.supportsResume;
-    const { context, newAttachments, replyTo, seenUpTo } = chatContext(this.messages, {
+    const canSee = (m: ChatMessage) => this.canSee(id, m);
+    const isAgent = (a: string) => this.agents.has(a);
+    // One snapshot of memory for the whole prompt: a trim while older context is read from disk can't
+    // open a gap between the two (messages posted meanwhile wait for the next turn, as before).
+    const snapshot = { messages: this.messages.slice(), base: this.chat.base };
+    const earlier = await this.earlierContext(snapshot, r.lastSeen, fresh, Boolean(owed), contextVisible({ id, plan, isAgent, canSee }));
+    const { context, newAttachments, replyTo, seenUpTo } = chatContext(snapshot.messages, {
       id,
+      base: snapshot.base,
+      earlier,
       lastSeen: r.lastSeen,
       plan,
       owed,
       fresh,
-      isAgent: (a) => this.agents.has(a),
-      canSee: (m) => this.canSee(id, m),
+      isAgent,
+      canSee,
     });
     if (!context.length && !plan.instruction) {
       // Nothing left to do (e.g. its send-back was withdrawn by an acceptance): autopilot carries on.
@@ -2392,7 +2508,7 @@ export class Orchestrator extends EventEmitter {
     }
     // Before autopilot decides what's next: a "done" from this turn is checked (or reopened if stale).
     await this.settleMarkedDone(id, c.attemptsAtStart, settled).catch((e) => console.error('done check:', e));
-    await this.checkScopeAfterTurn(r).catch(() => {});
+    await this.checkScopeAfterTurn(r).catch((e) => void this.reporter.report('scope check', e)); // only a warning, never blocks the turn
     this.advanceReviews();
     await this.continueLoop(r, before);
   }
@@ -2619,7 +2735,8 @@ export class Orchestrator extends EventEmitter {
         'Your tasks (report each with [[done: <id>#<attempt> | …]]):\n' +
         mine.map((t) => `- ${t.id}#${this.attemptOf(t.id)}: ${t.title} [${t.status ?? 'todo'}]${files(t)}${wait(t)}${note(t)}`).join('\n')
       );
-    } catch {
+    } catch (e) {
+      this.reporter.report('task digest', e); // the turn still runs, just without its task list
       return '';
     }
   }
@@ -2698,6 +2815,18 @@ export class Orchestrator extends EventEmitter {
     return this.agents.get(id)?.cfg.name ?? id;
   }
 
+  /** Warnings still waiting for a project to open (the page shows them as errors meanwhile). */
+  waitingWarnings(): string[] {
+    return this.project ? [] : [...this.pendingWarnings];
+  }
+
+  /** Something went wrong that you should know about: in the chat now, or once a project is open. */
+  warn(text: string): void {
+    console.warn(text);
+    if (this.project) this.notice(`⚠ ${text}`);
+    else if (!this.pendingWarnings.includes(text)) this.pendingWarnings.push(text);
+  }
+
   private system(text: string): void {
     this.add({ from: 'system', to: 'all', text });
   }
@@ -2709,10 +2838,52 @@ export class Orchestrator extends EventEmitter {
 
   private add(m: Omit<ChatMessage, 'id' | 'ts'>): void {
     const msg: ChatMessage = { id: randomUUID(), ts: Date.now(), ...m };
-    this.messages.push(msg);
+    this.chat.push(msg);
     this.emit('message', msg);
     if (this.project) {
-      appendFile(join(this.project.teamDir, 'chat.jsonl'), JSON.stringify(msg) + '\n').catch(console.error);
+      this.chatPending.push({ file: join(this.project.teamDir, 'chat.jsonl'), line: JSON.stringify(msg) + '\n' });
+      this.chatWrite = this.chatWrite.then(() => this.flushChat());
+    }
+  }
+
+  /**
+   * Append waiting chat lines in order. A line that fails (e.g. disk full) stays first in line and is
+   * tried again before any newer one (on the next message, or within a minute), so the file never has
+   * a hole that would shift message numbers. Never rejects.
+   */
+  private async flushChat(): Promise<void> {
+    // Order matters per file (per project); a log that keeps failing doesn't hold up another project's.
+    const stuck = new Set<string>();
+    for (const next of [...this.chatPending]) {
+      if (stuck.has(next.file)) continue;
+      try {
+        if (!next.retry) await appendFile(next.file, next.line);
+        else {
+          // A failed write may have landed all, some or none of the line: finish it rather than write it twice.
+          const landed = await lineLanded(next.file, next.line);
+          if (landed === 'all-but-newline') await appendFile(next.file, '\n');
+          // Start on a fresh line after any partial write (blank and broken lines are skipped when reading).
+          else if (landed === 'no') await appendFile(next.file, '\n' + next.line);
+        }
+        this.chatPending.splice(this.chatPending.indexOf(next), 1);
+      } catch (e) {
+        next.retry = true;
+        stuck.add(next.file);
+        // Told in the chat only when it's the open project's log; another project's is logged.
+        const open = this.project && next.file === join(this.project.teamDir, 'chat.jsonl');
+        this.reporter.report(
+          open ? 'save chat' : `save chat ${next.file}`,
+          e,
+          open ? "Couldn't add new messages to team/chat.jsonl; they show here and the app keeps trying, but they'd be missing after a restart" : undefined,
+        );
+      }
+    }
+    if (stuck.size && !this.chatRetry) {
+      this.chatRetry = setTimeout(() => {
+        this.chatRetry = undefined;
+        this.chatWrite = this.chatWrite.then(() => this.flushChat());
+      }, 60_000);
+      this.chatRetry.unref?.();
     }
   }
 
@@ -2826,6 +2997,6 @@ export class Orchestrator extends EventEmitter {
     // Serialized, and tmp+rename so two turns finishing together can't leave a torn file.
     this.metaWrite = this.metaWrite
       .then(() => writeAtomic(file, JSON.stringify(meta, null, 2)))
-      .catch(console.error);
+      .catch(this.reporter.catcher('save settings', "Couldn't save this project's settings to team/session.json; a restart would bring back older ones"));
   }
 }

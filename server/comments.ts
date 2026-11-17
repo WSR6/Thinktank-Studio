@@ -1,4 +1,4 @@
-import { existsSync, readFileSync } from 'node:fs';
+import { loadJsonFile, mayWrite } from './safe-json.js';
 import { rename, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 
@@ -28,26 +28,29 @@ export interface LineComment {
   at: number;
 }
 
-export function loadComments(teamDir: string): LineComment[] {
-  const file = join(teamDir, 'comments.json');
-  try {
-    const data = existsSync(file) ? JSON.parse(readFileSync(file, 'utf8')) : [];
-    return Array.isArray(data) ? data.filter((c) => c && typeof c.id === 'string') : [];
-  } catch {
-    return [];
-  }
+/** team/comments.json. A damaged file is moved aside and the list starts empty (onProblem tells the user). */
+export function loadComments(teamDir: string, onProblem: (text: string) => void = () => {}): LineComment[] {
+  const { value, problem } = loadJsonFile<LineComment[]>(join(teamDir, 'comments.json'), [], {
+    label: 'team/comments.json',
+    what: 'the line comments on branches start empty',
+    valid: Array.isArray,
+  });
+  if (problem) onProblem(problem);
+  return value.filter((c) => c && typeof c.id === 'string');
 }
 
 let writing: Promise<void> = Promise.resolve();
-export function saveComments(teamDir: string, comments: LineComment[]): Promise<void> {
+/** Saves are queued (tmp + rename). `onError`: a failed save (logged by default). */
+export function saveComments(teamDir: string, comments: LineComment[], onError: (e: unknown) => void = console.error): Promise<void> {
   const file = join(teamDir, 'comments.json');
   const data = JSON.stringify(comments, null, 2);
   writing = writing
     .then(async () => {
+      if (!mayWrite(file)) return; // damaged and no copy could be kept: leave it for the user
       await writeFile(file + '.tmp', data);
       await rename(file + '.tmp', file);
     })
-    .catch(console.error);
+    .catch(onError);
   return writing;
 }
 

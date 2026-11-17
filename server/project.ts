@@ -51,7 +51,7 @@ export async function prepareReviewWorktree(p: ProjectInfo, owner: string): Prom
   const name = `_review-${owner}`;
   const dir = join(p.root, 'agents', name);
   if (!existsSync(dir)) {
-    await git(p.repoDir, 'worktree', 'prune').catch(() => {});
+    await git(p.repoDir, 'worktree', 'prune').catch(() => {}); // tidy-up only; the add below reports real problems
     await git(p.repoDir, 'worktree', 'add', '--detach', dir, `agent/${owner}`);
   } else {
     await git(dir, 'checkout', '--detach', '--force', `agent/${owner}`);
@@ -66,6 +66,7 @@ async function identity(cwd: string): Promise<string[]> {
     await git(cwd, 'config', 'user.email');
     return [];
   } catch {
+    // No git identity set up on this computer: commit as the app.
     return ['-c', 'user.name=Thinktank Studio', '-c', 'user.email=tts@localhost'];
   }
 }
@@ -118,9 +119,11 @@ export async function openProject(name: string, agentIds: string[]): Promise<Pro
   const p = paths(name, agentIds);
   if (!existsSync(join(p.repoDir, '.git'))) throw new Error(`Project "${name}" not found`);
   await mkdir(p.teamDir, { recursive: true });
-  await keepLineEndings(p.repoDir).catch(() => {});
+  await keepLineEndings(p.repoDir).catch((e) => console.warn(`Couldn't set line endings for ${name}: ${(e as Error).message}`));
   // Worktrees store absolute paths; repair them in case the project folder was moved.
-  await git(p.repoDir, 'worktree', 'repair', ...Object.values(p.agentDirs).filter((d) => existsSync(d))).catch(() => {});
+  await git(p.repoDir, 'worktree', 'repair', ...Object.values(p.agentDirs).filter((d) => existsSync(d))).catch((e) =>
+    console.warn(`git worktree repair for ${name}: ${(e as Error).message}`), // ensureWorktrees below recreates any that are still broken
+  );
   await ensureWorktrees(p);
   return p;
 }
@@ -317,9 +320,10 @@ export async function createArbiterWorktree(p: ProjectInfo, agentId: string): Pr
 
 export async function removeArbiterWorktree(p: ProjectInfo, agentId: string): Promise<void> {
   const dir = join(p.root, 'agents', `_arbiter-${agentId}`);
+  // Cleanup of a temporary checkout: each step may find nothing to do (already removed), which is fine.
   if (existsSync(dir)) await git(p.repoDir, 'worktree', 'remove', '--force', dir).catch(() => {});
-  await git(p.repoDir, 'worktree', 'prune').catch(() => {});
-  await git(p.repoDir, 'branch', '-D', `arbiter/${agentId}`).catch(() => {});
+  await git(p.repoDir, 'worktree', 'prune').catch(() => {}); // as above
+  await git(p.repoDir, 'branch', '-D', `arbiter/${agentId}`).catch(() => {}); // as above
 }
 
 /**
@@ -517,7 +521,7 @@ export function teamFilesChangedSince(p: ProjectInfo, sinceMs: number): string[]
     try {
       entries = readdirSync(dir, { withFileTypes: true });
     } catch {
-      return;
+      return; // removed or unreadable while walking: nothing new in it to report
     }
     for (const e of entries) {
       // The app's own bookkeeping (rewritten on every send-back, review, turn) isn't the agent's work.
@@ -595,7 +599,9 @@ export async function readTeamFiles(p: ProjectInfo): Promise<{ plan: string; tas
       const text = decodeText(buf);
       if (text !== buf.toString('utf8')) await rewriteAsUtf8(path, buf, text);
       return text;
-    } catch {
+    } catch (e) {
+      // Missing is normal (no plan yet); a file that exists but can't be read is worth a log line.
+      if ((e as NodeJS.ErrnoException).code !== 'ENOENT') console.warn(`Couldn't read ${path}: ${(e as Error).message}`);
       return '';
     }
   };

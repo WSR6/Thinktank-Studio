@@ -42,7 +42,7 @@ function cached<T>(path: string, parse: (text: string) => T): T | undefined {
     cache.set(path, { mtime, value });
     return value;
   } catch {
-    return undefined;
+    return undefined; // no such file or not parseable: the CLI's built-in model list is used
   }
 }
 
@@ -209,7 +209,7 @@ function serverCatalog(server: string): ModelCatalog {
         serverLists.set(url, { at: Date.now(), ids });
         if (changed) onServerModels();
       })
-      .catch(() => undefined);
+      .catch(() => undefined); // server not reachable right now: keep the last list it gave
     void fetchContexts(url);
   }
   // Reasoning on/off is the server's own setting, so no effort picker.

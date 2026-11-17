@@ -132,7 +132,7 @@ export class WorktreeSetup {
       try {
         return readSetupConfig(d)?.waitForSetup !== false;
       } catch {
-        return false;
+        return false; // a broken tts.yaml is reported when setup runs; turns don't wait on it
       }
     };
     return dirs.filter((d) => this.runs.has(d) && waits(d)).map((d) => this.runs.get(d)!);
