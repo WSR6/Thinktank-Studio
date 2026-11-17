@@ -94,7 +94,7 @@ const HISTORY_WINDOW = 40;
 const PHASES: Phase[] = ['plan', 'build', 'review'];
 const AUTONOMY: Autonomy[] = ['read', 'edits', 'auto', 'full'];
 /** Leader asks for a gated action by ending a reply with e.g. [[phase: build]] or [[merge: codex]]. */
-const REQUEST_RE = /\[\[\s*(phase|merge)\s*:\s*([a-z0-9_-]+)\s*\]\]/gi;
+export const REQUEST_RE = /\[\[\s*(phase|merge)\s*:\s*([a-z0-9_-]+)\s*\]\]/gi;
 /** Model/effort ids go on the command line: safe characters, and no leading '-' so they can't become flags. */
 const SAFE_ID = /^(?:[A-Za-z0-9][A-Za-z0-9._:-]{0,63})?$/;
 /** Model ids may also be provider-qualified (Hermes: "anthropic/claude-sonnet-4"), never start with - or /. */
@@ -128,7 +128,7 @@ const AUTOPILOT_MAX_TURNS = Number(process.env.TTS_AUTOPILOT_MAX_TURNS ?? 20);
 const DESKTOP_COUNTDOWN_MS = Number(process.env.TTS_DESKTOP_COUNTDOWN_S ?? 20) * 1000;
 const AUTOPILOT_IDLE_LIMIT = 2;
 /** @mention not preceded by a word char or '.', so e-mail addresses don't trigger hand-offs. */
-const MENTION_RE = /(?<![\w.])@([A-Za-z0-9_-]+)/g;
+export const MENTION_RE = /(?<![\w.])@([A-Za-z0-9_-]+)/g;
 
 interface TurnPlan {
   /** Extra instruction appended to this turn's prompt (debate rounds). */
@@ -167,15 +167,15 @@ const MAX_DISCUSSION_ROUNDS = Number(process.env.TTS_DISCUSSION_ROUNDS ?? 3);
 /** Private agent-to-agent messages allowed per message from you, so two agents can't chat forever. */
 const MAX_AGENT_DMS = 4;
 /** An agent with nothing new to add replies just this; it isn't posted to the chat. */
-const PASS_RE = /^\s*(?:\[\[\s*pass\s*\]\]|pass\.?)\s*$/i;
+export const PASS_RE = /^\s*(?:\[\[\s*pass\s*\]\]|pass\.?)\s*$/i;
 /** A reply that starts with [[to: grok]] goes privately to that teammate (you still see it). */
 /** "[[done: t3#2 | done | summary]]": a builder reports a task finished, blocked or partly done. */
-const DONE_RE = /\[\[\s*done\s*:\s*([\w.-]+)(?:\s*#\s*(\d+))?\s*\|\s*(done|blocked|partial)\s*(?:\|\s*([^\]]*?))?\s*\]\]/gi;
+export const DONE_RE = /\[\[\s*done\s*:\s*([\w.-]+)(?:\s*#\s*(\d+))?\s*\|\s*(done|blocked|partial)\s*(?:\|\s*([^\]]*?))?\s*\]\]/gi;
 /** "[[options: A | B | C]]" with an @user question: shown as buttons on the needs-you banner. */
-const OPTIONS_RE = /\[\[\s*options\s*:\s*([^\]]+)\]\]/i;
-const DM_RE = /^\s*\[\[\s*to\s*:\s*@?([a-z0-9_-]+)\s*\]\]\s*/i;
+export const OPTIONS_RE = /\[\[\s*options\s*:\s*([^\]]+)\]\]/i;
+export const DM_RE = /^\s*\[\[\s*to\s*:\s*@?([a-z0-9_-]+)\s*\]\]\s*/i;
 /** "[[ask: codex]] question": ask a teammate and get its answer in your next turn. */
-const ASK_RE = /^\s*\[\[\s*ask\s*:\s*@?([a-z0-9_-]+)\s*\]\]\s*/i;
+export const ASK_RE = /^\s*\[\[\s*ask\s*:\s*@?([a-z0-9_-]+)\s*\]\]\s*/i;
 const MAX_ASKS = 4;
 const ASK_TIMEOUT_MS = Number(process.env.TTS_ASK_TIMEOUT_MIN ?? 15) * 60_000;
 
@@ -196,7 +196,7 @@ interface Ask {
   timer?: NodeJS.Timeout;
 }
 /** @user in a reply means "I need the user": flagged with a "needs you" badge. */
-const USER_RE = /(?<![\w.])@user\b/i;
+export const USER_RE = /(?<![\w.])@user\b/i;
 
 /** Running per-agent usage. Turns without a reported cost are counted so the UI can flag the total as partial. */
 interface UsageTotals {
@@ -252,7 +252,7 @@ const NOT_ASKED_YET = Number.MAX_SAFE_INTEGER;
 const reviewKey = (e: ReviewEntry) => `${e.rounds}:${e.stage}`;
 
 /** The text mentions this task id as a whole word (t1 doesn't match t10). */
-function namesTask(text: string, taskId: string): boolean {
+export function namesTask(text: string, taskId: string): boolean {
   return new RegExp(`(?<![\\w-])${taskId.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(?![\\w-])`).test(text);
 }
 
@@ -263,7 +263,7 @@ function approvedThisRound(e: ReviewEntry, id: string): boolean {
 }
 
 /** Keep the verdict and its task together, so prose about other tasks can't redirect it. */
-function reviewVerdict(text: string, anywhere = false): { verdict?: 'approve' | 'changes'; taskId?: string } {
+export function reviewVerdict(text: string, anywhere = false): { verdict?: 'approve' | 'changes'; taskId?: string } {
   // A line with both markers is a quote of the review instructions ("[[verdict: approve]] … or [[verdict: changes]]"), not a verdict.
   const lines = text.split('\n').filter((l) => !(/\[\[\s*verdict\s*:\s*approve/i.test(l) && /\[\[\s*verdict\s*:\s*changes/i.test(l)));
   const explicit = /\[\[\s*verdict\s*:\s*(approve|changes)(?:\s*(?:\|\s*|\s+)(t\d+)(?:\s*#\s*\d+)?)?\s*\]\]/gi;

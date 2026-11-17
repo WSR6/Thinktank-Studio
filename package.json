@@ -13,7 +13,8 @@
     "mock": "node scripts/supervisor.mjs --mock",
     "dev": "tsx watch server/index.ts",
     "start:direct": "tsx server/index.ts",
-    "typecheck": "tsc --noEmit -p ."
+    "typecheck": "tsc --noEmit -p .",
+    "test": "node scripts/run-tests.mjs"
   },
   "engines": {
     "node": ">=20"

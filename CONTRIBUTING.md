@@ -15,7 +15,9 @@ Thanks for wanting to help. Bug reports, ideas and fixes are all welcome.
    npm install
    npm run mock        # fake agents: no CLIs or usage needed
    npm run typecheck   # must pass
+   npm test            # must pass
    ```
+   Both also run on every pull request, on Windows and Linux. If you change a rule the tests in `test/` cover, update or add a test with it.
    If your change touches a real agent (Claude Code, Codex, Grok, Hermes), please also try it with that CLI and say so in the pull request.
 3. Keep each pull request to one change. Small ones get merged faster.
 4. In the pull request, say what it fixes or adds, how you tested it, and on which operating system.
