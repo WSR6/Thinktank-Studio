@@ -717,8 +717,8 @@ export class Orchestrator extends EventEmitter {
   private wakeForNewTasks(tasks: Task[]): void {
     const added = tasks.filter((t) => !this.knownTasks.has(t.id));
     for (const t of added) this.knownTasks.add(t.id);
+    if (added.some(OPEN)) this.allDoneAnnounced = false; // a later "project finished" is news again, autopilot or not
     if (!added.length || this.phase !== 'build' || !this.autopilot) return;
-    if (added.some(OPEN)) this.allDoneAnnounced = false; // a later "project finished" is news again
     const owners = new Set(
       added
         .filter((t) => OPEN(t) && this.isReady(t, tasks) && t.owner && this.agents.has(t.owner))
@@ -936,6 +936,8 @@ export class Orchestrator extends EventEmitter {
       this.system(`${t.id} "${t.title ?? ''}" is unblocked (${taskId} accepted); ${this.nameOf(t.owner)} can start it.`);
       void this.enqueue(t.owner, { instruction: this.continueInstruction(t, tasks).replace('AUTOPILOT: keep going.', 'UNBLOCKED:') + fromMain });
     }
+    // The last task may finish with autopilot off, where no loop is left to notice: check here too.
+    this.checkAllDone(tasks);
   }
 
   // ── Needs you & private agent messages ────────────────────────────────
