@@ -133,6 +133,8 @@ export interface Runtime {
   adapter: AgentAdapter;
   settings: AgentSettings;
   sessionId?: string;
+  /** Hermes: the profile the running turn was started with (its session belongs to that profile). */
+  turnProfile?: string;
   /** Index into messages of the next message this agent hasn't seen. */
   lastSeen: number;
   status: AgentStatus;

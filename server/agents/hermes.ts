@@ -34,9 +34,11 @@ export class HermesAdapter implements AgentAdapter {
       }
       segment = '';
     };
-    const { model, effort, autonomy } = o.settings;
+    const { model, effort, autonomy, profile } = o.settings;
 
     const args = [
+      // A profile is a separate Hermes home: its own config, default model, memory and sessions.
+      ...(profile ? ['-p', profile] : []),
       'chat',
       '--query-file', '-',
       '--format', 'stream-json',

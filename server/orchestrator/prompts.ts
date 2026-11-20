@@ -52,7 +52,7 @@ Rules:
 /** Tells the agent which model and effort it runs on; the CLIs don't, so agents can't answer "what model are you?". */
 export function modelLine(cfg: AgentConfig, settings: AgentSettings): string {
   if (cfg.adapter === 'mock' || cfg.adapter === 'generic') return '';
-  const { model, effort } = effectiveModel(cfg.adapter, settings.model, settings.effort, cfg.server);
+  const { model, effort } = effectiveModel(cfg.adapter, settings.model, settings.effort, cfg.server, settings.profile);
   return `[you are running on model: ${model} | reasoning effort: ${effort}]`;
 }
 

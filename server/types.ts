@@ -10,6 +10,8 @@ export interface AgentSettings {
   model: string;
   effort: string;
   autonomy: Autonomy;
+  /** Hermes only: the profile to run as (`hermes -p <name>`). Empty = Hermes's own sticky profile. */
+  profile?: string;
 }
 
 export interface ChatMessage {
@@ -61,6 +63,8 @@ export interface AgentConfig {
   model?: string;
   effort?: string;
   autonomy?: Autonomy;
+  /** Hermes only: default profile (one of `hermes profile list`); each profile has its own default model. */
+  profile?: string;
   /** Commands pre-approved at the "edits" level (default: git, npm, node, python, cargo, go, make…). */
   allowCommands?: string[];
   color?: string;

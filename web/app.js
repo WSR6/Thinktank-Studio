@@ -153,6 +153,8 @@ function handle(m) {
       break;
     case 'agent_config':
       agentConfig = { agents: m.agents, adapters: m.adapters };
+      // Suggestions for the Hermes profile field.
+      $('#hermesProfiles').replaceChildren(...(m.hermesProfiles ?? []).map((p) => new Option(p)));
       if ($('#agentsDialog').open && !agentsDirty) renderAgentRows(m.agents);
       break;
     case 'agent_config_saved':
@@ -611,6 +613,7 @@ function buildAgent(a) {
     <div class="plan-limits" hidden></div>
     ${a.catalog ? `
     <div class="agent-settings" hidden>
+      <select class="profile" hidden title="Which Hermes profile this agent runs as. Each profile has its own default model, memory and skills, for example a coding profile with a coding model. (default) marks the one set in agents.config.json."></select>
       <select class="model" title="Which AI model this agent uses. The list comes from the CLI itself, so new models appear after you update the CLI. (default) marks the one set in agents.config.json."></select>
       <select class="effort" title="How hard the model thinks before answering. Higher is better for hard problems but slower and uses more of your plan's limits. Only the levels the chosen model accepts are listed."></select>
       <select class="autonomy" title="What this agent may do without asking you first. Hover each choice for details.">${AUTONOMY.map(([v, t, tip]) => `<option value="${v}" title="${esc(tip)}">${t}</option>`).join('')}</select>
@@ -644,6 +647,7 @@ function buildAgent(a) {
       else fillModelPicker(model, agentById(a.id));
     };
     el.querySelector('.effort').onchange = (e) => set({ effort: e.target.value });
+    el.querySelector('.profile').onchange = (e) => set({ profile: e.target.value });
     el.querySelector('.autonomy').onchange = (e) => {
       if (e.target.value === 'full' && !confirm(`Give ${a.name} full access? It can run any command without asking.`)) {
         e.target.value = agentById(a.id).settings.autonomy;
@@ -713,12 +717,30 @@ function setOptions(sel, opts, value) {
   sel.value = value;
 }
 
+/** Hermes profiles; hidden for other CLIs. Empty = the profile Hermes itself has active. */
+function fillProfilePicker(sel, a) {
+  const profiles = a.catalog.profiles;
+  sel.hidden = !profiles?.length;
+  if (sel.hidden) return;
+  const def = a.defaults.profile;
+  const current = a.settings.profile || '';
+  const active = `${a.catalog.activeProfile || 'default'}${a.catalog.activeMissing ? ', not found' : ''}`;
+  // Always offered, even when agents.config.json names a profile, so you can go back to Hermes's own pick.
+  const opts = [['', `Profile: Hermes's active (${active})${def ? '' : ' (default)'}`]];
+  for (const p of profiles) opts.push([p, `Profile: ${p}${p === def ? ' (default)' : ''}`]);
+  // A profile that was removed from Hermes since: keep it visible so the pick isn't silently changed.
+  if (current && !profiles.includes(current)) opts.push([current, `Profile: ${current} (not found)`]);
+  setOptions(sel, opts, current);
+}
+
 /** Models from the CLI's own list; the configured default is marked, and a hand-typed id is kept. */
 function fillModelPicker(sel, a) {
   const cat = a.catalog;
   const def = a.defaults.model;
   const opts = [];
-  if (!def) opts.push(['', `Model: CLI default${cat.cliDefaultModel ? ` (${cat.cliDefaultModel})` : ''}`]);
+  // A Hermes profile has its own default model.
+  const from = cat.profiles ? 'profile default' : 'CLI default';
+  if (!def) opts.push(['', `Model: ${from}${cat.cliDefaultModel ? ` (${cat.cliDefaultModel})` : ''}`]);
   // Listed models, plus the configured default and the current pick even when the CLI hides them.
   const shown = cat.models.filter((m) => !m.hidden || m.id === def || m.id === a.settings.model);
   for (const m of shown) opts.push([m.id, `${m.label || m.id}${m.id === def ? ' (default)' : ''}`]);
@@ -810,6 +832,8 @@ function updateAgent(a) {
   u.title = usageTitle(a.totals);
   const model = el.querySelector('.model');
   if (!model) return;
+  const profile = el.querySelector('.profile');
+  if (document.activeElement !== profile) fillProfilePicker(profile, a);
   if (document.activeElement !== model) fillModelPicker(model, a);
   const effort = el.querySelector('.effort');
   if (document.activeElement !== effort) fillEffortPicker(effort, a);
@@ -1595,6 +1619,7 @@ function agentRow(a, isNew) {
     <button class="small danger" data-remove title="Remove this agent from the team. Its branch and copy of the project stay on disk.">Remove</button>
     <label class="wide" title="Options added to every run, separated by spaces. Quote an option that has spaces."><span>Extra options (optional)</span><input data-f="args" value="${esc(joinArgs(a.args))}" placeholder="${esc(ARGS_EXAMPLES[a.adapter] || '')}"></label>
     <label title="Default model; you can still change it per project on the Agents tab. Empty = the program's default."><span>Default model (optional)</span><input data-f="model" value="${esc(a.model || '')}"></label>
+    <label data-profile-field title="Hermes only. The profile this agent runs as by default; each profile has its own default model, memory and skills. You can still change it per project on the Agents tab. Empty = the profile Hermes has active."><span>Hermes profile (optional)</span><input data-f="profile" value="${esc(a.profile || '')}" placeholder="e.g. coder" list="hermesProfiles"></label>
     <label class="wide" data-server-field title="Codex only. The address of a model server on this computer or your network (LM Studio, Ollama, llama.cpp…). The server must offer the OpenAI Responses API. Empty = OpenAI's models."><span>Model server (optional)</span><input data-f="server" value="${esc(a.server || '')}" placeholder="e.g. http://192.168.1.50:1234/v1 (LM Studio) or http://localhost:11434/v1 (Ollama)"></label>
     <label class="stuck" title="How long this agent may go without any output before the app says it may be stuck. Local models are slow: 30 minutes is the default with a model server, 6 without."><span>Stuck warning after (min)</span><input data-f="stuckMinutes" type="number" min="1" max="600" value="${esc(a.stuckMinutes ?? '')}" placeholder="${a.server ? 30 : 6}"></label>
     <div class="hint"></div>`;
@@ -1603,7 +1628,11 @@ function agentRow(a, isNew) {
   };
   hint(a.adapter);
   const serverField = row.querySelector('[data-server-field]');
-  const showServer = (adapter) => (serverField.hidden = adapter !== 'codex');
+  const profileField = row.querySelector('[data-profile-field]');
+  const showServer = (adapter) => {
+    serverField.hidden = adapter !== 'codex';
+    profileField.hidden = adapter !== 'hermes';
+  };
   showServer(a.adapter);
   // The default stuck limit follows whether a server is filled in.
   row.querySelector('[data-f=server]').oninput = (e) => (row.querySelector('[data-f=stuckMinutes]').placeholder = e.target.value.trim() ? '30' : '6');
@@ -1646,6 +1675,9 @@ function readAgentRows() {
     // A model server is a Codex setting; another program drops it.
     if (a.adapter === 'codex' && v('server')) a.server = v('server');
     else delete a.server;
+    // So is a profile for Hermes.
+    if (a.adapter === 'hermes' && v('profile')) a.profile = v('profile');
+    else delete a.profile;
     const stuck = v('stuckMinutes');
     if (stuck) a.stuckMinutes = Number(stuck);
     else delete a.stuckMinutes;

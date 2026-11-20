@@ -317,7 +317,7 @@ export class AppHelper extends EventEmitter {
       extraDirs: [],
       readDirs: [this.attachmentsDir, ...(project ? [project.root] : [])],
       images,
-      settings: { model: this.cfg.model ?? '', effort: this.cfg.effort ?? '', autonomy },
+      settings: { model: this.cfg.model ?? '', effort: this.cfg.effort ?? '', autonomy, profile: this.cfg.profile },
       sessionId: this.state.sessionId,
       onEvent: (event) => this.emit('event', event),
     });

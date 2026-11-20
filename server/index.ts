@@ -8,6 +8,7 @@ import { fileURLToPath } from 'node:url';
 import { WebSocketServer, type WebSocket } from 'ws';
 import { ADAPTERS, loadAgentConfigs, loadHelperConfig, saveAgentConfigs, validateAgentConfigs } from './config.js';
 import { AppHelper } from './helper.js';
+import { hermesProfiles } from './agents/models.js';
 import { Orchestrator } from './orchestrator.js';
 import { captureConsole } from './logbuffer.js';
 import { projectView, refreshIdle, runAction } from './operator.js';
@@ -137,7 +138,7 @@ wss.on('connection', (ws: WebSocket) => {
     for (const error of orch.waitingWarnings()) send({ type: 'error', error });
     send({ type: 'helper_state', helper: await helper.snapshot() });
     send({ type: 'projects', projects: await listProjects() });
-    send({ type: 'agent_config', agents: orch.agentConfigs(), adapters: ADAPTERS.filter((a) => a !== 'mock' || mock) });
+    send({ type: 'agent_config', agents: orch.agentConfigs(), adapters: ADAPTERS.filter((a) => a !== 'mock' || mock), hermesProfiles: hermesProfiles().names });
     if (orch.project) {
       send({ type: 'team', ...(await orch.teamFiles()) });
       send({
@@ -298,7 +299,7 @@ wss.on('connection', (ws: WebSocket) => {
           await orch.savePlan(String(cmd.plan));
           break;
         case 'get_agent_config':
-          send({ type: 'agent_config', agents: orch.agentConfigs(), adapters: ADAPTERS.filter((a) => a !== 'mock' || mock) });
+          send({ type: 'agent_config', agents: orch.agentConfigs(), adapters: ADAPTERS.filter((a) => a !== 'mock' || mock), hermesProfiles: hermesProfiles().names });
           break;
         case 'save_agent_config': {
           const agents = validateAgentConfigs(cmd.agents);

@@ -3,7 +3,7 @@ import { EventEmitter } from 'node:events';
 import { watch, type FSWatcher } from 'node:fs';
 import { appendFile } from 'node:fs/promises';
 import { join } from 'node:path';
-import { effectiveModel, fitEffort, modelCatalog, onServerModelsChanged, refreshServerContext } from './agents/models.js';
+import { effectiveModel, fitEffort, HERMES_PROFILE, modelCatalog, onServerModelsChanged, refreshServerContext } from './agents/models.js';
 import { createAdapter } from './agents/index.js';
 import {
   branchDiff,
@@ -321,8 +321,8 @@ export class Orchestrator extends EventEmitter {
         loop: r.loop,
         statusLine: this.statusLine(r),
         waitingFor: this.asks.waitingOn(r.cfg.id)?.to ?? null,
-        catalog: modelCatalog(r.cfg.adapter, r.cfg.server) ?? null,
-        defaults: this.defaultSettings(r.cfg),
+        catalog: modelCatalog(r.cfg.adapter, r.cfg.server, r.settings.profile) ?? null,
+        defaults: this.shownDefaults(r),
         disabled: r.disabled,
         outUntil: r.outUntil ?? null,
         // A model server has no plan limits; Codex's OpenAI usage would be misleading there.
@@ -420,9 +420,12 @@ export class Orchestrator extends EventEmitter {
       r.lastSeen = Math.min(s.lastSeen ?? 0, this.chat.total);
       // An empty saved model/effort means "default", which is the agents.config.json value when set.
       const saved = s.settings ?? {};
-      const model = saved.model || r.cfg.model || '';
-      const effort = fitEffort(r.cfg.adapter, model, r.cfg.server ? '' : saved.effort || r.cfg.effort || '', r.cfg.effort);
-      r.settings = { ...this.defaultSettings(r.cfg), ...saved, model, effort };
+      const profile = r.cfg.adapter === 'hermes' && typeof saved.profile === 'string' && (!saved.profile || HERMES_PROFILE.test(saved.profile)) ? saved.profile : r.cfg.profile;
+      // A profile picked for this project has its own default model, not agents.config.json's.
+      const defaults = this.cfgDefaults(r.cfg, profile);
+      const model = saved.model || defaults.model;
+      const effort = fitEffort(r.cfg.adapter, model, r.cfg.server ? '' : saved.effort || defaults.effort, defaults.effort || undefined, profile);
+      r.settings = { ...this.defaultSettings(r.cfg), ...saved, model, effort, ...(r.cfg.adapter === 'hermes' ? { profile: profile ?? '' } : {}) };
       r.totals = { ...emptyTotals(), ...s.totals };
       // Why autopilot had paused it (you stopped it, no progress, a failed turn…) survives a restart.
       r.loop = { active: false, turns: 0, idle: 0, ...(isStr(s.loopStopped) ? { stopped: s.loopStopped } : {}) };
@@ -1064,16 +1067,30 @@ export class Orchestrator extends EventEmitter {
     const r = this.agents.get(id);
     if (!r) throw new Error(`Unknown agent ${id}`);
     const next = { ...r.settings };
+    if (patch.profile !== undefined && r.cfg.adapter === 'hermes') {
+      const profile = typeof patch.profile === 'string' ? patch.profile.toLowerCase() : patch.profile;
+      if (typeof profile !== 'string' || (profile && !HERMES_PROFILE.test(profile))) throw new Error('Profile: lowercase letters, digits, - and _ only');
+      if (profile !== (next.profile ?? '')) {
+        next.profile = profile;
+        // Each profile has its own default model and model list; start from that one unless a model was picked too.
+        next.model = this.cfgDefaults(r.cfg, profile).model;
+        next.effort = this.cfgDefaults(r.cfg, profile).effort;
+        // A profile is a separate Hermes home: its sessions aren't the old profile's, so start a new one.
+        r.sessionId = undefined;
+      }
+    }
+    // Empty = the default: agents.config.json's, which (for Hermes) belongs to the configured profile only.
+    const defaults = this.cfgDefaults(r.cfg, next.profile);
     if (patch.model !== undefined) {
       if (typeof patch.model !== 'string' || !SAFE_MODEL.test(patch.model)) throw new Error('Model id: letters, digits, . _ : / [ ] - only');
-      next.model = patch.model || r.cfg.model || '';
+      next.model = patch.model || defaults.model;
     }
     if (patch.effort !== undefined) {
       if (typeof patch.effort !== 'string' || !SAFE_ID.test(patch.effort)) throw new Error('Effort: letters, digits, . _ : - only');
-      next.effort = patch.effort || r.cfg.effort || '';
+      next.effort = patch.effort || defaults.effort;
     }
     // A new model may not accept the current effort (the turn would fail).
-    next.effort = r.cfg.server ? '' : fitEffort(r.cfg.adapter, next.model, next.effort, r.cfg.effort);
+    next.effort = r.cfg.server ? '' : fitEffort(r.cfg.adapter, next.model, next.effort, defaults.effort || undefined, next.profile);
     // Remembered so a model that turns out to need paid credits can be switched back.
     if (next.model !== r.settings.model) r.prevModel = r.settings.model;
     if (patch.autonomy !== undefined) {
@@ -2189,6 +2206,7 @@ export class Orchestrator extends EventEmitter {
     const prompt = oneShotPrompt(r.cfg, this.project.name, this.modelLine(r), job.instruction);
     r.killReason = undefined;
     this.setStatus(r, 'working');
+    r.turnProfile = r.settings.profile ?? '';
     const turn = r.adapter.runTurn({ prompt, cwd: job.cwd, extraDirs: job.extraDirs, settings: r.settings, onEvent: (e) => this.emitAgent(id, e) });
     r.current = turn;
     const timer = setTimeout(() => {
@@ -2273,11 +2291,12 @@ export class Orchestrator extends EventEmitter {
     r.stopping = false;
     r.inFlight = plan.instruction;
     this.setStatus(r, 'working');
-    const eff = effectiveModel(r.cfg.adapter, r.settings.model, r.settings.effort, r.cfg.server);
+    const eff = effectiveModel(r.cfg.adapter, r.settings.model, r.settings.effort, r.cfg.server, r.settings.profile);
     this.emitAgent(id, { kind: 'log', text: `model: ${eff.model} · effort: ${eff.effort} · ${r.settings.autonomy}` });
     const watch = newWatch();
     const c: TurnCtx = { ...ctx.c, watch };
     r.watch = watch;
+    r.turnProfile = r.settings.profile ?? '';
     const turn = r.adapter.runTurn({
       prompt,
       cwd: project.agentDirs[id],
@@ -2456,7 +2475,7 @@ export class Orchestrator extends EventEmitter {
   /** Turn step 3a: the CLI answered. Post the reply, act on its markers, then let autopilot decide what's next. */
   private async onTurnDone(c: TurnCtx, res: TurnResult, before: string | undefined): Promise<void> {
     const { r, id, owed } = c;
-    if (res.sessionId) r.sessionId = res.sessionId;
+    if (res.sessionId && this.sameProfile(r)) r.sessionId = res.sessionId;
     r.lastSeen = c.seenUpTo;
     this.addUsage(r, res.usage);
     this.setStatus(r, 'idle');
@@ -2783,8 +2802,22 @@ export class Orchestrator extends EventEmitter {
     return modelLine(r.cfg, r.settings);
   }
 
+  /**
+   * The model and effort agents.config.json sets, for this profile. A Hermes profile other than the
+   * configured one has its own defaults (in its config.yaml), so the configured ones don't apply to it.
+   */
+  private cfgDefaults(cfg: AgentConfig, profile: string | undefined): { model: string; effort: string } {
+    if (cfg.adapter === 'hermes' && (profile ?? '') !== (cfg.profile ?? '')) return { model: '', effort: '' };
+    return { model: cfg.model ?? '', effort: cfg.effort ?? '' };
+  }
+
+  /** What the pickers mark as "(default)" right now: the configured values for the agent's current profile. */
+  private shownDefaults(r: Runtime): AgentSettings {
+    return { ...this.defaultSettings(r.cfg), ...this.cfgDefaults(r.cfg, r.settings.profile) };
+  }
+
   private defaultSettings(cfg: AgentConfig): AgentSettings {
-    return { model: cfg.model ?? '', effort: cfg.effort ?? '', autonomy: cfg.autonomy ?? 'edits' };
+    return { model: cfg.model ?? '', effort: cfg.effort ?? '', autonomy: cfg.autonomy ?? 'edits', ...(cfg.adapter === 'hermes' ? { profile: cfg.profile ?? '' } : {}) };
   }
 
   private addUsage(r: Runtime, u: TurnUsage | undefined): void {
@@ -2901,11 +2934,19 @@ export class Orchestrator extends EventEmitter {
     this.emit('state'); // the status line changes with it
   }
 
+  /**
+   * Hermes: the profile wasn't switched since the running turn started. A session belongs to the
+   * profile that made it, so a turn from the old profile must not hand its session to the new one.
+   */
+  private sameProfile(r: Runtime): boolean {
+    return r.cfg.adapter !== 'hermes' || (r.turnProfile ?? '') === (r.settings.profile ?? '');
+  }
+
   private emitAgent(agentId: string, event: AgentEvent): void {
     if (event.kind === 'session') {
       // Saved as soon as the CLI names it, so a turn cut off by a restart resumes the same conversation.
       const r = this.agents.get(agentId);
-      if (r && r.sessionId !== event.id) {
+      if (r && r.sessionId !== event.id && this.sameProfile(r)) {
         r.sessionId = event.id;
         this.saveMeta();
       }

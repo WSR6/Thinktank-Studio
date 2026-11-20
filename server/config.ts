@@ -1,6 +1,7 @@
 import { existsSync, readFileSync, renameSync, writeFileSync, copyFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import type { AgentConfig } from './types.js';
+import { HERMES_PROFILE } from './agents/models.js';
 import { isRecord, loadJsonFile, mayWrite } from './safe-json.js';
 
 // TTS_AGENTS_CONFIG points at another file (tests, or a second team on the same machine).
@@ -27,6 +28,9 @@ export function loadHelperConfig(): AgentConfig {
   const env = process.env.TTS_HELPER_ADAPTER;
   if (env) Object.assign(cfg, { adapter: env, command: env, model: undefined });
   if (process.env.TTS_HELPER_MODEL) cfg.model = process.env.TTS_HELPER_MODEL;
+  // A profile is passed to the CLI as an argument: only a plain Hermes profile name.
+  if (typeof cfg.profile === 'string') cfg.profile = cfg.profile.trim().toLowerCase();
+  if (cfg.adapter !== 'hermes' || typeof cfg.profile !== 'string' || !HERMES_PROFILE.test(cfg.profile)) delete cfg.profile;
   return cfg;
 }
 
@@ -55,6 +59,13 @@ export function validateAgentConfigs(agents: unknown): AgentConfig[] {
       a.server = a.server.replace(/\/+$/, '');
       if (/^https?:\/\/[^/]+$/.test(a.server)) a.server += '/v1';
       if (!a.model) throw new Error(`"${a.name}" uses a model server, so it needs a model (the name the server shows, e.g. google/gemma-4-12b-qat)`);
+    }
+    if (a.profile !== undefined) {
+      if (a.adapter !== 'hermes') throw new Error(`"${a.name}": a profile works with the Hermes program only`);
+      // Hermes profile ids are lowercase (it lowercases -p itself); store the id it uses.
+      if (typeof a.profile === 'string') a.profile = a.profile.trim().toLowerCase();
+      if (typeof a.profile !== 'string' || (a.profile && !HERMES_PROFILE.test(a.profile))) throw new Error(`Profile for "${a.name}": letters, digits, - and _ only (a name from \`hermes profile list\`)`);
+      if (!a.profile) delete a.profile;
     }
     if (a.stuckMinutes !== undefined && !(typeof a.stuckMinutes === 'number' && a.stuckMinutes >= 1 && a.stuckMinutes <= 600)) {
       throw new Error(`"Stuck warning after" for "${a.name}" must be 1 to 600 minutes`);

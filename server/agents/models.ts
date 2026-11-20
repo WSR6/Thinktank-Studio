@@ -1,6 +1,6 @@
-import { readFileSync, statSync } from 'node:fs';
+import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
 import { homedir } from 'node:os';
-import { join } from 'node:path';
+import { basename, dirname, join } from 'node:path';
 import type { AdapterKind } from '../types.js';
 import { CATALOG } from './catalog.js';
 
@@ -28,6 +28,11 @@ export interface ModelCatalog {
   cliDefaultModel?: string;
   cliDefaultEffort?: string;
   source: 'cli' | 'built-in';
+  /** Hermes only: its profiles, and the one a run with no profile gets. */
+  profiles?: string[];
+  activeProfile?: string;
+  /** The active profile's folder is gone: Hermes refuses to run without a -p. */
+  activeMissing?: boolean;
 }
 
 const cache = new Map<string, { mtime: number; value: unknown }>();
@@ -118,11 +123,77 @@ function grok(): ModelCatalog | undefined {
   };
 }
 
-/** Hermes keeps each provider's model list in provider_models_cache.json; offer the configured provider's. */
-function hermes(): ModelCatalog | undefined {
-  const home =
-    process.env.HERMES_HOME ||
-    (process.platform === 'win32' && process.env.LOCALAPPDATA ? join(process.env.LOCALAPPDATA, 'hermes') : join(homedir(), '.hermes'));
+/** A Hermes profile id as Hermes stores it (lowercase folder name); also safe as a CLI argument. */
+export const HERMES_PROFILE = /^[a-z0-9][a-z0-9_-]{0,63}$/;
+
+/** Files that make a folder in <root>/profiles a real profile (Hermes's own test). */
+const PROFILE_MARKERS = ['config.yaml', '.env', 'SOUL.md', 'profile.yaml', 'auth.json', 'state.db'];
+
+/** HERMES_HOME when it names one profile's folder (<root>/profiles/<name>): Hermes then uses it as is. */
+function pinnedProfile(env = process.env.HERMES_HOME): string | undefined {
+  // Hermes's own test: the parent folder is spelled exactly "profiles". Ids are lowercase.
+  return env && basename(dirname(env)) === 'profiles' ? basename(env).toLowerCase() : undefined;
+}
+
+/** Hermes's own folder: HERMES_HOME (or the folder above it when it names a profile), else the platform default. */
+function hermesRoot(): string {
+  const env = process.env.HERMES_HOME;
+  if (env) return pinnedProfile(env) ? dirname(dirname(env)) : env;
+  return process.platform === 'win32' && process.env.LOCALAPPDATA ? join(process.env.LOCALAPPDATA, 'hermes') : join(homedir(), '.hermes');
+}
+
+/**
+ * Hermes profiles: "default" (Hermes's own folder) plus each real profile folder in <root>/profiles,
+ * and the one a run with no -p gets: a HERMES_HOME that names a profile, else the sticky one from
+ * `hermes profile use`. A sticky profile that was deleted is still named (Hermes refuses to run then),
+ * with `activeMissing`, so the picker shows the truth.
+ */
+export function hermesProfiles(root = hermesRoot(), env = process.env.HERMES_HOME): { names: string[]; active: string; activeMissing?: boolean } {
+  let dirs: string[] = [];
+  try {
+    dirs = readdirSync(join(root, 'profiles'), { withFileTypes: true })
+      .filter(
+        (d) =>
+          d.isDirectory() &&
+          HERMES_PROFILE.test(d.name) &&
+          PROFILE_MARKERS.some((f) => existsSync(join(root, 'profiles', d.name, f))) &&
+          // Deleted with `hermes profile delete` but not yet removed (a locked folder on Windows): Hermes refuses it.
+          !existsSync(join(root, 'profiles', '.deleted', d.name)),
+      )
+      .map((d) => d.name)
+      .sort();
+  } catch {
+    /* no profiles folder: only the default profile */
+  }
+  let active = pinnedProfile(env);
+  if (!active) {
+    try {
+      active = readFileSync(join(root, 'active_profile'), 'utf8').trim().toLowerCase() || undefined;
+    } catch {
+      /* no sticky profile */
+    }
+  }
+  active ??= 'default';
+  const names = ['default', ...dirs.filter((d) => d !== 'default')];
+  return { names, active, ...(names.includes(active) ? {} : { activeMissing: true }) };
+}
+
+/** A profile's own folder ('' = the sticky one). */
+function hermesHome(profile: string, root = hermesRoot()): string {
+  const name = profile || hermesProfiles(root).active;
+  return name === 'default' ? root : join(root, 'profiles', name);
+}
+
+/**
+ * Hermes keeps each provider's model list in provider_models_cache.json; offer the configured provider's.
+ * Each profile has its own config (and default model), so the list follows the agent's profile.
+ */
+function hermes(profile = ''): ModelCatalog | undefined {
+  const root = hermesRoot();
+  const { names, active, activeMissing } = hermesProfiles(root);
+  const profiles = { profiles: names, activeProfile: active, ...(activeMissing ? { activeMissing } : {}) };
+  const home = hermesHome(profile, root);
+  const shared = root; // a profile without its own model-list cache uses the main folder's
   const config = cached(join(home, 'config.yaml'), (t) => {
     const block = t.match(/^model:[ \t]*\r?\n((?:[ \t]+.*(?:\r?\n|$))*)/m)?.[1] ?? '';
     const val = (k: string) => block.match(new RegExp(`^[ \\t]+${k}:[ \\t]*["']?([^"'\\r\\n#]+?)["']?[ \\t]*$`, 'm'))?.[1];
@@ -130,12 +201,17 @@ function hermes(): ModelCatalog | undefined {
     return { model: val('default'), provider: val('provider'), effort };
   });
   const efforts = CATALOG.hermes!.efforts;
-  const lists = cached(join(home, 'provider_models_cache.json'), (t) => JSON.parse(t) as Record<string, { models?: string[] }>);
+  const parse = (t: string) => JSON.parse(t) as Record<string, { models?: string[] }>;
+  const lists = cached(join(home, 'provider_models_cache.json'), parse) ?? (home !== shared ? cached(join(shared, 'provider_models_cache.json'), parse) : undefined);
   const ids = (config?.provider && lists?.[config.provider]?.models) || [];
   if (!ids.length) {
-    return config?.model ? { models: [{ id: config.model, efforts }], efforts, cliDefaultModel: config.model, cliDefaultEffort: config.effort, source: 'cli' } : undefined;
+    if (config?.model) return { models: [{ id: config.model, efforts }], efforts, cliDefaultModel: config.model, cliDefaultEffort: config.effort, source: 'cli', ...profiles };
+    // No readable config (e.g. the active profile was deleted): still offer the profiles, so the
+    // picker can show that and let you pick one that exists, with the built-in model list.
+    const b = builtIn('hermes');
+    return b && { ...b, ...profiles };
   }
-  return { models: ids.map((id) => ({ id, efforts })), efforts, cliDefaultModel: config?.model ?? ids[0], cliDefaultEffort: config?.effort, source: 'cli' };
+  return { models: ids.map((id) => ({ id, efforts })), efforts, cliDefaultModel: config?.model ?? ids[0], cliDefaultEffort: config?.effort, source: 'cli', ...profiles };
 }
 
 function union(models: ModelInfo[]): string[] {
@@ -217,9 +293,9 @@ function serverCatalog(server: string): ModelCatalog {
 }
 
 /** The pickers' choices: a model server's own list for an agent that uses one, else the CLI's. */
-export function modelCatalog(kind: AdapterKind, server?: string): ModelCatalog | undefined {
+export function modelCatalog(kind: AdapterKind, server?: string, profile = ''): ModelCatalog | undefined {
   if (server) return serverCatalog(server);
-  const live = kind === 'codex' ? codex() : kind === 'grok' ? grok() : kind === 'hermes' ? hermes() : undefined;
+  const live = kind === 'codex' ? codex() : kind === 'grok' ? grok() : kind === 'hermes' ? hermes(profile) : undefined;
   return live ?? builtIn(kind);
 }
 
@@ -227,8 +303,8 @@ export function modelCatalog(kind: AdapterKind, server?: string): ModelCatalog |
  * Make sure the effort is one the model accepts (any other fails the turn). An empty effort is
  * pinned too when the CLI's own default effort wouldn't fit. Unknown models are left alone.
  */
-export function fitEffort(kind: AdapterKind, model: string, effort: string, preferred?: string): string {
-  const cat = modelCatalog(kind);
+export function fitEffort(kind: AdapterKind, model: string, effort: string, preferred?: string, profile = ''): string {
+  const cat = modelCatalog(kind, undefined, profile);
   const m = cat?.models.find((x) => x.id === (model || cat.cliDefaultModel));
   if (!m?.efforts.length) return effort;
   const wanted = effort || cat?.cliDefaultEffort;
@@ -238,9 +314,9 @@ export function fitEffort(kind: AdapterKind, model: string, effort: string, pref
 }
 
 /** The model and effort a turn will really run with, for the agent's own prompt and the activity log. */
-export function effectiveModel(kind: AdapterKind, model: string, effort: string, server?: string): { model: string; effort: string } {
+export function effectiveModel(kind: AdapterKind, model: string, effort: string, server?: string, profile = ''): { model: string; effort: string } {
   if (server) return { model: model || 'server default', effort: 'set on the model server' };
-  const cat = modelCatalog(kind);
+  const cat = modelCatalog(kind, undefined, profile);
   const m = model || cat?.cliDefaultModel || '';
   const e = effort || cat?.cliDefaultEffort || cat?.models.find((x) => x.id === m)?.defaultEffort || '';
   return { model: m || 'CLI default', effort: e || 'CLI default' };
