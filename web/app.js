@@ -726,7 +726,8 @@ function fillProfilePicker(sel, a) {
   const current = a.settings.profile || '';
   const active = `${a.catalog.activeProfile || 'default'}${a.catalog.activeMissing ? ', not found' : ''}`;
   // Always offered, even when agents.config.json names a profile, so you can go back to Hermes's own pick.
-  const opts = [['', `Profile: Hermes's active (${active})${def ? '' : ' (default)'}`]];
+  // The "(default)" mark goes before the name: a profile may itself be called "default".
+  const opts = [['', `Profile: Hermes's active one${def ? '' : ' (default)'}, now ${active}`]];
   for (const p of profiles) opts.push([p, `Profile: ${p}${p === def ? ' (default)' : ''}`]);
   // A profile that was removed from Hermes since: keep it visible so the pick isn't silently changed.
   if (current && !profiles.includes(current)) opts.push([current, `Profile: ${current} (not found)`]);
