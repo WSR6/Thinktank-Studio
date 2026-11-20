@@ -34,8 +34,11 @@ test('ActivityLog: lines go to team/activity/<id>.jsonl and load back', async ()
     const log = new ActivityLog();
     log.load(dir, ['a']); // creates team/activity
     log.record(dir, 'a', { kind: 'log', text: 'saved' });
-    await new Promise((r) => setTimeout(r, 50));
-    assert.match(readFileSync(join(dir, 'activity', 'a.jsonl'), 'utf8'), /"text":"saved"/);
+    // The write is fire-and-forget; slow CI disks can take well over 50 ms, so wait for it.
+    const file = join(dir, 'activity', 'a.jsonl');
+    const read = () => { try { return readFileSync(file, 'utf8'); } catch { return ''; } };
+    for (let t = 0; t < 3000 && !/"text":"saved"/.test(read()); t += 25) await new Promise((r) => setTimeout(r, 25));
+    assert.match(read(), /"text":"saved"/);
     const again = new ActivityLog();
     again.load(dir, ['a']);
     assert.deepEqual(again.history(['a']).a.map((l) => l.text), ['saved']);
