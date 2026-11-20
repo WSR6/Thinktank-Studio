@@ -4,8 +4,8 @@ import { gitEnv, trustGitDir } from '../server/agents/codex.js';
 
 test('trustGitDir adds one safe.directory entry with forward slashes', () => {
   const env: NodeJS.ProcessEnv = {};
-  trustGitDir('C:\\Users\\me\\.thinktank\\app-helper-1', env);
-  assert.equal(env.GIT_CONFIG_PARAMETERS, `'safe.directory'='C:/Users/me/.thinktank/app-helper-1'`);
+  trustGitDir('D:\\work\\.thinktank\\app-helper-1', env);
+  assert.equal(env.GIT_CONFIG_PARAMETERS, `'safe.directory'='D:/work/.thinktank/app-helper-1'`);
 });
 
 test('trustGitDir keeps existing settings and does not repeat itself', () => {
