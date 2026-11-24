@@ -10,8 +10,9 @@ import { autonomyArgs } from './catalog.js';
  * A session keeps the settings it was created with. Repeating them on a resume is fine; after the
  * user changes the model, effort or autonomy, Hermes refuses the resume; the turn fails and the
  * orchestrator's lost-session retry starts a new session with the full chat in its prompt.
+ * Used for read-only turns and `"transport": "chat"`; other turns go over ACP (hermes-acp.ts).
  */
-export class HermesAdapter implements AgentAdapter {
+export class HermesChatAdapter implements AgentAdapter {
   readonly supportsResume = true;
   constructor(private cfg: AgentConfig) {}
 

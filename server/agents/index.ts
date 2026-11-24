@@ -3,7 +3,7 @@ import { ClaudeAdapter } from './claude.js';
 import { CodexAdapter } from './codex.js';
 import { GenericAdapter } from './generic.js';
 import { GrokAdapter } from './grok.js';
-import { HermesAdapter } from './hermes.js';
+import { HermesAdapter } from './hermes-acp.js';
 import { MockAdapter } from './mock.js';
 
 export function createAdapter(cfg: AgentConfig, mock: boolean): AgentAdapter {

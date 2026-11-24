@@ -67,6 +67,10 @@ export function validateAgentConfigs(agents: unknown): AgentConfig[] {
       if (typeof a.profile !== 'string' || (a.profile && !HERMES_PROFILE.test(a.profile))) throw new Error(`Profile for "${a.name}": letters, digits, - and _ only (a name from \`hermes profile list\`)`);
       if (!a.profile) delete a.profile;
     }
+    if (a.transport !== undefined) {
+      if (a.adapter !== 'hermes') throw new Error(`"${a.name}": "transport" works with the Hermes program only`);
+      if (a.transport !== 'acp' && a.transport !== 'chat') throw new Error(`"transport" for "${a.name}" must be "acp" or "chat"`);
+    }
     if (a.stuckMinutes !== undefined && !(typeof a.stuckMinutes === 'number' && a.stuckMinutes >= 1 && a.stuckMinutes <= 600)) {
       throw new Error(`"Stuck warning after" for "${a.name}" must be 1 to 600 minutes`);
     }

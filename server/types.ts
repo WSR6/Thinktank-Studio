@@ -65,6 +65,11 @@ export interface AgentConfig {
   autonomy?: Autonomy;
   /** Hermes only: default profile (one of `hermes profile list`); each profile has its own default model. */
   profile?: string;
+  /**
+   * Hermes only: how the app talks to Hermes. "acp" (default): one Hermes kept running, real Stop,
+   * model changes without a new conversation. "chat": one `hermes chat` per turn (the older way).
+   */
+  transport?: 'acp' | 'chat';
   /** Commands pre-approved at the "edits" level (default: git, npm, node, python, cargo, go, make…). */
   allowCommands?: string[];
   color?: string;
@@ -117,4 +122,6 @@ export interface AgentAdapter {
   /** True if the CLI keeps its own conversation (we only send new messages each turn). */
   readonly supportsResume: boolean;
   runTurn(opts: TurnOptions): Turn;
+  /** End anything kept running between turns (an agent removed or replaced). */
+  dispose?(): void;
 }

@@ -1491,6 +1491,8 @@ export class Orchestrator extends EventEmitter {
         next.set(cfg.id, r);
       }
       this.agents = next;
+      // A program kept running between turns (Hermes over ACP) ends with its runtime.
+      for (const old of before.values()) if (next.get(old.cfg.id) !== old) old.adapter.dispose?.();
       if (project && this.project?.name === project.name) {
         this.project = project;
         for (const c of added) void this.ensureSetup(c.id, project.agentDirs[c.id], c.id);

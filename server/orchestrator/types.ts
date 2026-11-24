@@ -218,7 +218,8 @@ export interface PendingRequest {
 // ── Small helpers ─────────────────────────────────────────────────────
 
 /** What counts as "the same program" for keeping an agent's conversation: a changed server is another one. */
-export const programKey = (c: AgentConfig) => `${c.adapter}|${c.command}|${(c.args ?? []).join(' ')}${c.server ? `|${c.server}` : ''}`;
+export const programKey = (c: AgentConfig) =>
+  `${c.adapter}|${c.command}|${(c.args ?? []).join(' ')}${c.server ? `|${c.server}` : ''}${c.transport === 'chat' ? '|chat' : ''}`;
 
 /** "3:16 AM", or "Oct 25, 3:16 AM" when it isn't today. */
 export function clockTime(ms: number): string {
