@@ -97,7 +97,7 @@ test('a turn: new session, its text and usage, and only the settings that differ
       'session/prompt', // the /reasoning command: the in-process server ignores the config option
       'session/prompt',
     ]);
-    assert.equal(m1[2].params.value, 'workspace_session', 'edits → workspace edits allowed');
+    assert.equal(m1[2].params.value, 'ask', 'edits → Hermes asks the app about every edit');
     assert.equal(m1[3].params.modelId, 'coder-model');
     assert.equal(m1[5].params.prompt[0].text, '/reasoning high');
     assert.equal(t1.events.filter((e) => e.kind === 'text').length, 1, 'the /reasoning reply is not shown');
@@ -174,6 +174,29 @@ test("the gateway's settled reply with its reasoning block is shown once", async
   assert.equal(cleanReply(dup), 'Created notes.txt; not committed.');
   assert.equal(cleanReply('💭 **Reasoning:**\n```\nthinking\n```\n\nOnly the reply.'), 'Only the reply.', 'nothing streamed first');
   assert.equal(cleanReply('Plain reply with ``` code ```.'), 'Plain reply with ``` code ```.');
+  assert.equal(cleanReply('# API\n\n# API errors\n\nDetails'), '# API\n\n# API errors\n\nDetails', 'an ordinary reply is left alone');
+});
+
+test("the gateway's settled last chunk that repeats the streamed reply replaces it", async () => {
+  const { settleReply } = await import('../server/agents/hermes-acp.js');
+  // The text from the live test.
+  const reply = 'The write was refused by the ACP client; no file was created.';
+  const note = '⚠️ File-mutation verifier: 1 file edit(s) FAILED';
+  assert.equal(settleReply(reply, `\n\n${reply}\n\n${note}`), `${reply}\n\n${note}`);
+  // An ordinary reply's last chunk is only added on, even when earlier text repeats a heading.
+  assert.equal(settleReply('# API\n\n# API errors', '\n\nDetails'), '# API\n\n# API errors\n\nDetails');
+  assert.equal(settleReply('# API', '\n\n# API errors\n\nDetails'), '# API\n\n# API errors\n\nDetails', 'a short heading repeated');
+  const long = 'The configuration loader reads tts.yaml first';
+  assert.equal(settleReply(long, `\n\n${long} and then the env.`), `${long}\n\n${long} and then the env.`, 'repeated, but not up to a line break');
+  // A last chunk repeating only part of what came before is not a settled reply.
+  assert.equal(settleReply('One. Two.', '\n\nOne.'), 'One. Two.\n\nOne.');
+  // Through the adapter, with the fake Hermes sending exactly that.
+  const a = await adapter();
+  try {
+    assert.equal((await a.runTurn(opts('DUP').o).done).text, 'The write to escape.txt was refused by the app.\n\n⚠️ note');
+  } finally {
+    a.dispose();
+  }
 });
 
 test('Stop cancels the running turn; the session stays usable', async () => {

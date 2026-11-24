@@ -26,6 +26,11 @@ async function prompt(id, p) {
     update(sid, { sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'Reasoning effort set' } });
     return send({ id, result: { stopReason: 'end_turn' } });
   }
+  if (text.startsWith('DUP')) {
+    // The gateway's settled reply sent after the streamed one, as one chunk.
+    for (const t of ['The write to escape.txt ', 'was refused by the app.', '\n\nThe write to escape.txt was refused by the app.\n\n⚠️ note']) update(sid, { sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: t } });
+    return send({ id, result: { stopReason: 'end_turn' } });
+  }
   if (text.startsWith('SLOW')) {
     update(sid, { sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'working on it' } });
     await new Promise((r) => (cancel = r));

@@ -39,9 +39,12 @@ interface ActiveTurn {
   onPermission(p: any): unknown;
 }
 
-/** Edit approval policy for an autonomy level ("read" never reaches ACP). */
+/**
+ * Edit approval policy for an autonomy level ("read" never reaches ACP). At "edits" Hermes asks the app
+ * about every edit ("ask"): its own "accept edits" mode also allows the whole temp folder.
+ */
 export function editPolicy(autonomy: AgentSettings['autonomy']): string {
-  return autonomy === 'edits' ? 'workspace_session' : 'session';
+  return autonomy === 'edits' ? 'ask' : 'session';
 }
 
 /** Split a path into its root ("C:\", "/", "") and its parts, without collapsing ".." (a link may come first). */
@@ -152,9 +155,29 @@ const REASONING_BLOCK = /💭 \*\*Reasoning:\*\*\s*```[\s\S]*?```\s*/;
  */
 export function cleanReply(text: string): string {
   const m = REASONING_BLOCK.exec(text);
-  if (!m) return text;
-  const settled = text.slice(m.index + m[0].length);
-  return settled.trim() ? cleanReply(settled) : text.slice(0, m.index);
+  if (m) {
+    const settled = text.slice(m.index + m[0].length);
+    return settled.trim() ? cleanReply(settled) : text.slice(0, m.index);
+  }
+  return text;
+}
+
+/**
+ * The reply text at the end of a turn. When the settled reply differs from the streamed one (e.g. it
+ * adds Hermes's file-mutation verifier note), the gateway sends it as the turn's last chunk,
+ * `"\n\n" + settled`. If that last chunk repeats everything streamed before it, it is the reply;
+ * otherwise the text is kept as it came. Nothing in the stream marks that chunk, so the match is kept
+ * to what only the resend produces: one final chunk repeating at least 40 characters of earlier text
+ * exactly, then a line break or nothing. A model streams in small pieces, so its own last piece won't.
+ */
+export function settleReply(before: string, last: string): string {
+  const prior = before.trim();
+  const settled = last.startsWith('\n\n') ? last.slice(2).trimStart() : undefined;
+  if (settled !== undefined && prior.length >= 40 && settled.startsWith(prior)) {
+    const after = settled.slice(prior.length);
+    if (after === '' || after.startsWith('\n')) return settled;
+  }
+  return before + last;
 }
 
 function imageBlocks(images: string[] | undefined): any[] {
@@ -307,16 +330,19 @@ export class HermesAdapter implements AgentAdapter {
       if (killed) throw new Error('killed');
 
       // Turn state.
-      let segment = '';
+      // The text since the last tool call, kept as everything before the newest chunk plus that chunk.
+      let before = '';
+      let last = '';
       let lastSegment = '';
       const tools = new Map<string, string>();
-      const flush = () => {
-        const text = cleanReply(segment);
+      /** `end`: the turn is over, so the newest chunk may be the gateway's settled reply. */
+      const flush = (end = false) => {
+        const text = cleanReply(end ? settleReply(before, last) : before + last);
         if (text.trim()) {
           o.onEvent({ kind: 'text', text });
           lastSegment = text;
         }
-        segment = '';
+        before = last = '';
       };
       const dirs = [o.cwd, ...o.extraDirs];
       const turn: ActiveTurn = {
@@ -325,7 +351,10 @@ export class HermesAdapter implements AgentAdapter {
         onUpdate: (u) => {
           switch (u.sessionUpdate) {
             case 'agent_message_chunk':
-              if (u.content?.type === 'text' && typeof u.content.text === 'string') segment += u.content.text;
+              if (u.content?.type === 'text' && typeof u.content.text === 'string') {
+                before += last;
+                last = u.content.text;
+              }
               break;
             case 'tool_call': {
               flush();
@@ -362,7 +391,7 @@ export class HermesAdapter implements AgentAdapter {
         await this.applySettings(c, turn, o.settings, profile);
         if (killed) throw new Error('killed');
         const res = await c.request('session/prompt', { sessionId, prompt: [{ type: 'text', text: o.prompt }, ...imageBlocks(o.images)] });
-        flush();
+        flush(true);
         if (killed || res?.stopReason === 'cancelled') throw new Error(killed ? 'killed' : 'Hermes cancelled the turn');
         if (res?.stopReason === 'refusal') throw new Error('Hermes refused to continue this turn');
         const u = res?.usage;
